@@ -19,6 +19,7 @@
 #include "pcs.h"
 #include "sequence_control_set.h"
 #include "pic_buffer_desc.h"
+#include "svt_time.h"
 
 #include "resource_coordination_results.h"
 #include "pic_analysis_process.h"
@@ -1158,12 +1159,14 @@ static int32_t apply_denoise_2d(SequenceControlSet *scs, PictureParentControlSet
     fg_init_data.stride_cb            = pcs->enhanced_pic->stride_cb;
     fg_init_data.stride_cr            = pcs->enhanced_pic->stride_cr;
     fg_init_data.denoise_apply        = scs->static_config.film_grain_denoise_apply;
+    AomFilmGrainCrop *fg_crop         = &scs->static_config.film_grain_crop;
     EB_NEW(denoise_and_model, svt_aom_denoise_and_model_ctor, (EbPtr)&fg_init_data);
 
     if (svt_aom_denoise_and_model_run(denoise_and_model,
                                       inputPicturePointer,
                                       &pcs->frm_hdr.film_grain_params,
-                                      scs->static_config.encoder_bit_depth > EB_EIGHT_BIT)) {}
+                                      scs->static_config.encoder_bit_depth > EB_EIGHT_BIT,
+                                      fg_crop)) {}
 
     EB_DELETE(denoise_and_model);
 
@@ -1184,6 +1187,81 @@ static EbErrorType denoise_estimate_film_grain(SequenceControlSet *scs, PictureP
     }
 
     return return_error; //todo: add proper error handling
+}
+
+static EbErrorType replace_film_grain_params(AomFilmGrain *src, PictureParentControlSet *pcs_ptr) {
+    AomFilmGrain *dst = &pcs_ptr->frm_hdr.film_grain_params;
+
+    // Preserve the original random seed
+    const uint16_t seed = dst->random_seed;
+
+    // Efficiently copy film grain parameters excluding random_seed
+    if (svt_memcpy != NULL) {
+        svt_memcpy(dst, src, sizeof(*dst));
+    } else {
+        svt_memcpy_c(dst, src, sizeof(*dst));
+    }
+    dst->random_seed = seed;
+
+    return EB_ErrorNone;
+}
+
+static EbErrorType process_film_grain_first_frame_only(SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr) {
+    const bool startup_fg = scs_ptr->static_config.startup_film_grain_length > pcs_ptr->picture_number;
+
+    if (startup_fg && pcs_ptr->picture_number == 0) {
+        denoise_estimate_film_grain(scs_ptr, pcs_ptr);
+        // Copy the film grain params from the first frame to the SequenceControlSet
+        if (svt_memcpy != NULL) {
+            svt_memcpy(&scs_ptr->startup_fg_params, &pcs_ptr->frm_hdr.film_grain_params, sizeof(scs_ptr->startup_fg_params));
+        } else {
+            svt_memcpy_c(&scs_ptr->startup_fg_params, &pcs_ptr->frm_hdr.film_grain_params, sizeof(scs_ptr->startup_fg_params));
+        }
+        scs_ptr->startup_fg_params_ready = true;
+    } else if (!startup_fg && scs_ptr->picture_analysis_process_init_count == 1) {
+        replace_film_grain_params(&scs_ptr->last_fg_params, pcs_ptr);
+    } else {
+        // Wait for the first frame's params to be ready
+        while (!scs_ptr->startup_fg_params_ready) {
+            svt_av1_sleep(1);
+        }
+        replace_film_grain_params(&scs_ptr->startup_fg_params, pcs_ptr);
+    }
+
+    return EB_ErrorNone;
+}
+
+static EbErrorType process_film_grain_interval(SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr) {
+    const uint32_t      picture_number = pcs_ptr->picture_number;
+    const uint32_t      startup_fg_len = scs_ptr->static_config.startup_film_grain_length;
+    const bool          startup_fg     = (startup_fg_len > picture_number);
+    const uint32_t      interval       = (startup_fg ? scs_ptr->static_config.startup_film_grain_interval
+                                                     : scs_ptr->static_config.film_grain_estimation_interval);
+    FilmGrainParamSlot *fg_param_ring  = (startup_fg ? scs_ptr->startup_fg_param_ring
+                                                     : scs_ptr->fg_param_ring);
+    uint32_t            slot_num       = (picture_number / interval) % FG_PARAM_RING_SIZE;
+    FilmGrainParamSlot *slot           = &fg_param_ring[slot_num];
+    AomFilmGrain       *last_fg_params = &scs_ptr->last_fg_params;
+
+    if (picture_number % interval == 0) {
+        denoise_estimate_film_grain(scs_ptr, pcs_ptr);
+        if (scs_ptr->picture_analysis_process_init_count > 1) {
+            *slot = (FilmGrainParamSlot){.params       = pcs_ptr->frm_hdr.film_grain_params, 
+                                         .frame_number = picture_number};
+        } else {
+            *last_fg_params = pcs_ptr->frm_hdr.film_grain_params;
+        }
+    } else if (scs_ptr->picture_analysis_process_init_count > 1) {
+        uint32_t target_frame = picture_number - (picture_number % interval);
+        while (fg_param_ring[slot_num].frame_number != target_frame) {
+            svt_av1_sleep(1);
+        }
+        replace_film_grain_params(&slot->params, pcs_ptr);
+    } else {
+        replace_film_grain_params(last_fg_params, pcs_ptr);
+    }
+
+    return EB_ErrorNone;
 }
 
 static EbErrorType apply_film_grain_table(SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr) {
@@ -1218,7 +1296,22 @@ void svt_aom_picture_pre_processing_operations(PictureParentControlSet *pcs, Seq
     if (scs->static_config.fgs_table) {
         apply_film_grain_table(scs, pcs);
     } else if (scs->static_config.film_grain_denoise_strength) {
-        denoise_estimate_film_grain(scs, pcs);
+        const uint32_t pic_number = pcs->picture_number;
+        const uint32_t startup_fg_len = scs->static_config.startup_film_grain_length;
+
+        uint32_t interval = (startup_fg_len > pic_number)
+                             ? scs->static_config.startup_film_grain_interval
+                             : scs->static_config.film_grain_estimation_interval;
+
+        if (interval == 1) {
+            denoise_estimate_film_grain(scs, pcs);
+        } else {
+            if (interval == 0) {
+                process_film_grain_first_frame_only(scs, pcs);
+            } else {
+                process_film_grain_interval(scs, pcs);
+            }
+        }
     }
 
     return;

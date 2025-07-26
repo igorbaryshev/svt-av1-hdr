@@ -595,6 +595,81 @@ typedef struct EbSvtAv1EncConfiguration {
     * Default is 0. */
     uint8_t film_grain_denoise_apply;
 
+    /**
+     * @brief Stores film grain cropping area parameters.
+     */
+    AomFilmGrainCrop film_grain_crop;
+
+    /**
+     * @brief Film grain estimation interval.
+     *
+     * This parameter controls how often the film grain estimation is performed.
+     * 0: Estimate only once (at the first frame).
+     * 1: Estimate every frame (default).
+     * 2-50: Estimate every N-th frame.
+     *
+     * Default is 1.
+     */
+    uint32_t film_grain_estimation_interval;
+
+    /**
+     * @brief Film grain estimation startup length.
+     *
+     * This parameter controls how many frames are used to estimate the film grain
+     * at the beginning of the video with a startup interval.
+     *
+     * Default is 0.
+     */
+    uint32_t startup_film_grain_length;
+
+    /**
+     * @brief Film grain estimation startup interval.
+     *
+     * This parameter controls how often the film grain estimation is performed
+     * at the beginning of the video.
+     * 0: estimate only once (at the first frame).
+     * 1: Estimate every frame.
+     * 2-50: Estimate every N-th frame.
+     *
+     * Default is 2.
+     */
+    uint32_t startup_film_grain_interval;
+
+    /**
+     * @brief Signal to the library to treat film_grain_startup_length as seconds and
+     * multiply by fps_num/fps_den.
+     */
+    bool multiply_startup_fg_length;
+
+    /**
+     * @brief Generate film grain synthesis table
+     *
+     * 0: disable
+     * 1-50: enabled, predefined ISO values roughly corresponding to film grain strength levels.
+     * >51: literal ISO values
+     * 
+     * Default is 0.
+    */
+    uint32_t photon_noise_level;
+
+    /**
+     * @brief Photon noise ISO value
+     * 
+     * Default is 0.
+     */
+    uint32_t photon_noise_iso;
+
+    /**
+     * @brief Enable chroma noise, which will is scaled based on luma values for generated film grain table.
+     * 
+     * 0: disable chroma scaling
+     * 1: enable chroma scaling
+     * 
+     * Default is 0.
+     */
+    uint8_t enable_photon_noise_chroma;
+
+
     /* CDEF Level
     *
     * Default is -1. */
