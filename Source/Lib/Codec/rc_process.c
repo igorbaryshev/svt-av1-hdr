@@ -773,7 +773,6 @@ static int svt_av1_get_q_index_from_qstep_ratio(int leaf_qindex, double qstep_ra
     return qindex;
 }
 static const double r0_weight[3] = {0.75 /* I_SLICE */, 0.9 /* BASE */, 1 /* NON-BASE */};
-static const double qp_scale_compress_weight[4] = {1, 1.125, 1.25, 1.375};
 /******************************************************
  * crf_qindex_calc
  * Assign the q_index per frame.
@@ -803,7 +802,7 @@ static int crf_qindex_calc(PictureControlSet *pcs, RATE_CONTROL *rc, int qindex)
 
     // Since many frames can be processed at the same time, storing/using arf_q in rc param is not sufficient and will create a run to run.
     // So, for each frame, arf_q is updated based on the qp of its references.
-    if (scs-> static_config.qp_scale_compress_strength == 0) {
+    if (scs->static_config.qp_scale_compress_strength == 0.0) {
         rc->arf_q = MAX(rc->arf_q, ((pcs->ref_pic_qp_array[0][0] << 2) + 2));
         if (pcs->slice_type == B_SLICE)
             rc->arf_q = MAX(rc->arf_q, ((pcs->ref_pic_qp_array[1][0] << 2) + 2));
@@ -869,8 +868,8 @@ static int crf_qindex_calc(PictureControlSet *pcs, RATE_CONTROL *rc, int qindex)
             (ppcs->tpl_group_size < (uint32_t)(2 << pcs->ppcs->hierarchical_levels)))
             weight = MIN(weight + 0.1, 1);
 
-        double qstep_ratio = sqrt(ppcs->r0) * weight * qp_scale_compress_weight[pcs->scs->static_config.qp_scale_compress_strength];
-        if (pcs->scs->static_config.qp_scale_compress_strength) {
+        double qstep_ratio = sqrt(ppcs->r0) * weight * (1.000 + scs->static_config.qp_scale_compress_strength * 0.125);
+        if (scs->static_config.qp_scale_compress_strength) {
             // clamp qstep_ratio so it doesn't get past the weight value
             qstep_ratio = MIN(weight, qstep_ratio);
         }
@@ -973,7 +972,7 @@ static int cqp_qindex_calc(PictureControlSet *pcs, int qindex) {
     int active_worst_quality = qindex;
     if (pcs->temporal_layer_index == 0) {
         const double qratio_grad = pcs->ppcs->hierarchical_levels <= 4 ? 0.3 : 0.2;
-        const double qstep_ratio = (0.2 + (1.0 - (double)active_worst_quality / MAXQ) * qratio_grad) * qp_scale_compress_weight[pcs->scs->static_config.qp_scale_compress_strength];
+        const double qstep_ratio = (0.2 + (1.0 - (double)active_worst_quality / MAXQ) * qratio_grad) * (1.000 + scs->static_config.qp_scale_compress_strength * 0.125);
         q = scs->cqp_base_q = svt_av1_get_q_index_from_qstep_ratio(active_worst_quality, qstep_ratio, bit_depth);
     } else if (pcs->ppcs->is_ref && pcs->temporal_layer_index < pcs->ppcs->hierarchical_levels) {
         int this_height = pcs->ppcs->temporal_layer_index + 1;
@@ -2350,8 +2349,8 @@ static int rc_pick_q_and_bounds(PictureControlSet *pcs) {
         const unsigned int r0_weight_idx = !frame_is_intra_only(pcs->ppcs) + !!pcs->ppcs->temporal_layer_index;
         assert(r0_weight_idx <= 2);
         double       weight                  = r0_weight[r0_weight_idx];
-        double qstep_ratio             = sqrt(pcs->ppcs->r0) * weight * qp_scale_compress_weight[pcs->scs->static_config.qp_scale_compress_strength];
-        if (pcs->scs->static_config.qp_scale_compress_strength) {
+        double qstep_ratio             = sqrt(pcs->ppcs->r0) * weight * (1.000 + scs->static_config.qp_scale_compress_strength * 0.125);
+        if (scs->static_config.qp_scale_compress_strength) {
             // clamp qstep_ratio so it doesn't get past the weight value
             qstep_ratio = MIN(weight, qstep_ratio);
         }
@@ -3395,11 +3394,14 @@ void *svt_aom_rate_control_kernel(void *input_ptr) {
                                          (int8_t)scs->static_config.max_qp_allowed,
                                          (int8_t)scs->static_config.qp + scs->static_config.startup_qp_offset)
                         : (uint8_t)scs->static_config.qp;
+                    const int scs_qindex = CLIP3(MIN_Q_INDEX,
+                                                 MAX_Q_INDEX,
+                                                 quantizer_to_qindex[scs_qp] + scs->static_config.extended_crf_qindex_offset);
                     // if RC mode is 0,  fixed QP is used
                     // QP scaling based on POC number for Flat IPPP structure
                     // make sure no run to run is cause
                     if (pcs->ppcs->seq_param_changed)
-                        rc->active_worst_quality = quantizer_to_qindex[scs_qp];
+                        rc->active_worst_quality = scs_qindex;
                     frm_hdr->quantization_params.base_q_idx = quantizer_to_qindex[pcs->picture_qp];
                     if (pcs->ppcs->qp_on_the_fly == true) {
                         pcs->picture_qp = (uint8_t)CLIP3((int32_t)scs->static_config.min_qp_allowed,
@@ -3409,18 +3411,18 @@ void *svt_aom_rate_control_kernel(void *input_ptr) {
 
                     } else {
                         if (scs->enable_qp_scaling_flag) {
-                            const int32_t qindex = quantizer_to_qindex[scs_qp];
                             // if there are need enough pictures in the LAD/SlidingWindow, the adaptive QP scaling is not used
                             int32_t new_qindex;
                             // if CRF
                             if (pcs->ppcs->tpl_ctrls.enable) {
                                 if (pcs->picture_number == 0) {
-                                    rc->active_worst_quality = quantizer_to_qindex[scs_qp];
+                                    rc->active_worst_quality = scs_qindex;
                                     av1_rc_init(scs);
                                 }
                                 new_qindex = crf_qindex_calc(pcs, rc, rc->active_worst_quality);
                             } else // if CQP
-                                new_qindex = cqp_qindex_calc(pcs, qindex);
+                                //Check this in 3.0.0-psy
+                                new_qindex = cqp_qindex_calc(pcs, scs_qindex);
                             frm_hdr->quantization_params.base_q_idx = (uint8_t)CLIP3(
                                 (int32_t)quantizer_to_qindex[scs->static_config.min_qp_allowed],
                                 (int32_t)quantizer_to_qindex[scs->static_config.max_qp_allowed],
@@ -3429,7 +3431,7 @@ void *svt_aom_rate_control_kernel(void *input_ptr) {
 
                         if (scs->static_config.use_fixed_qindex_offsets || scs->static_config.extended_crf_qindex_offset) {
                             int32_t qindex = scs->static_config.use_fixed_qindex_offsets == 1
-                                ? quantizer_to_qindex[scs_qp]
+                                ? scs_qindex
                                 : frm_hdr->quantization_params
                                       .base_q_idx; // do not shut the auto QPS if use_fixed_qindex_offsets 2
 
