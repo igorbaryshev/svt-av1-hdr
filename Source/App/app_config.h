@@ -14,6 +14,12 @@
 
 #include <stdio.h>
 #include <stdbool.h>
+#ifdef LIBDOVI_FOUND
+#include <libdovi/rpu_parser.h>
+#endif
+#ifdef LIBHDR10PLUS_RS_FOUND
+#include <libhdr10plus-rs/hdr10plus.h>
+#endif
 
 #ifdef MIMALLOC_FOUND
 #include <mimalloc.h>
@@ -121,6 +127,7 @@ typedef struct EbPerformanceContext {
 } EbPerformanceContext;
 
 typedef struct MemMapFile {
+    bool     allow; //allow mem mapped file
     bool     enable; //enable mem mapped file
     size_t   file_size; //size of the input file
     uint64_t align_mask; //page size alignment mask

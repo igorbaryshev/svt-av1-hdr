@@ -197,6 +197,7 @@ void svt_aom_highbd_quantize_b_c(const TranLow *coeff_ptr, intptr_t n_coeffs, co
     *eob_ptr = (uint16_t)(eob + 1);
 }
 
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
 void svt_av1_highbd_quantize_b_facade(const TranLow *coeff_ptr, intptr_t n_coeffs, const MacroblockPlane *p,
                                       TranLow *qcoeff_ptr, TranLow *dqcoeff_ptr, uint16_t *eob_ptr, const ScanOrder *sc,
                                       const QuantParam *qparam) {
@@ -237,6 +238,7 @@ void svt_av1_highbd_quantize_b_facade(const TranLow *coeff_ptr, intptr_t n_coeff
     }
     assert(qparam->log_scale <= 2);
 }
+#endif
 
 static void av1_quantize_b_facade_ii(const TranLow *coeff_ptr, intptr_t n_coeffs, const MacroblockPlane *p,
                                      TranLow *qcoeff_ptr, TranLow *dqcoeff_ptr, uint16_t *eob_ptr, const ScanOrder *sc,
@@ -586,6 +588,7 @@ void svt_av1_quantize_fp_facade(const TranLow *coeff_ptr, intptr_t n_coeffs, con
     }
 }
 
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
 void svt_av1_highbd_quantize_fp_facade(const TranLow *coeff_ptr, intptr_t n_coeffs, const MacroblockPlane *p,
                                        TranLow *qcoeff_ptr, TranLow *dqcoeff_ptr, uint16_t *eob_ptr,
                                        const ScanOrder *sc, const QuantParam *qparam) {
@@ -623,6 +626,7 @@ void svt_av1_highbd_quantize_fp_facade(const TranLow *coeff_ptr, intptr_t n_coef
                                    qparam->log_scale);
     }
 }
+#endif
 
 void svt_av1_highbd_quantize_fp_qm_c(const TranLow *coeff_ptr, intptr_t count, const int16_t *zbin_ptr,
                                      const int16_t *round_ptr, const int16_t *quant_ptr, const int16_t *quant_shift_ptr,
@@ -1341,12 +1345,6 @@ static void svt_av1_optimize_b(PictureControlSet *pcs, ModeDecisionContext *ctx,
     }
 }
 
-static INLINE void set_dc_sign(int32_t *cul_level, int32_t dc_val) {
-    if (dc_val < 0)
-        *cul_level |= 1 << COEFF_CONTEXT_BITS;
-    else if (dc_val > 0)
-        *cul_level += 2 << COEFF_CONTEXT_BITS;
-}
 static INLINE TxSize aom_av1_get_adjusted_tx_size(TxSize tx_size) {
     switch (tx_size) {
     case TX_64X64:
@@ -1381,6 +1379,7 @@ void svt_aom_quantize_inv_quantize_light(PictureControlSet *pcs, int32_t *coeff,
     const QmVal *iq_matrix = pcs->ppcs->giqmatrix[qmatrix_level][AOM_PLANE_Y][adjusted_tx_size];
 
     if (q_matrix == NULL && iq_matrix == NULL) {
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
         if (bit_depth > EB_EIGHT_BIT) {
             svt_aom_highbd_quantize_b((TranLow *)coeff,
                                       n_coeffs,
@@ -1397,7 +1396,9 @@ void svt_aom_quantize_inv_quantize_light(PictureControlSet *pcs, int32_t *coeff,
                                       q_matrix,
                                       iq_matrix,
                                       av1_get_tx_scale_tab[txsize]);
-        } else {
+        } else
+#endif
+        {
             svt_aom_quantize_b((TranLow *)coeff,
                                n_coeffs,
                                enc_ctx->quants_8bit.v_zbin[q_index],
@@ -1415,6 +1416,7 @@ void svt_aom_quantize_inv_quantize_light(PictureControlSet *pcs, int32_t *coeff,
                                av1_get_tx_scale_tab[txsize]);
         }
     } else {
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
         if (bit_depth > EB_EIGHT_BIT) {
             svt_av1_highbd_quantize_b_qm((TranLow *)coeff,
                                          n_coeffs,
@@ -1431,7 +1433,9 @@ void svt_aom_quantize_inv_quantize_light(PictureControlSet *pcs, int32_t *coeff,
                                          q_matrix,
                                          iq_matrix,
                                          av1_get_tx_scale_tab[txsize]);
-        } else {
+        } else
+#endif
+        {
             svt_av1_quantize_b_qm((TranLow *)coeff,
                                   n_coeffs,
                                   enc_ctx->quants_8bit.v_zbin[q_index],
@@ -1634,10 +1638,12 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
     EncodeContext      *enc_ctx = scs->enc_ctx;
     int32_t plane = component_type == COMPONENT_LUMA ? AOM_PLANE_Y : (component_type == COMPONENT_CHROMA_CB ?
         AOM_PLANE_U : AOM_PLANE_V);
-    int32_t qmatrix_level    = (IS_2D_TRANSFORM(tx_type) && pcs->ppcs->frm_hdr.quantization_params.using_qmatrix)
-           ? pcs->ppcs->frm_hdr.quantization_params.qm[plane]
-           : NUM_QM_LEVELS - 1;
-    TxSize  adjusted_tx_size = aom_av1_get_adjusted_tx_size(txsize);
+
+    int32_t qmatrix_level = (IS_2D_TRANSFORM(tx_type) && pcs->ppcs->frm_hdr.quantization_params.using_qmatrix)
+        ? pcs->ppcs->frm_hdr.quantization_params.qm[plane]
+        : NUM_QM_LEVELS - 1;
+
+    TxSize          adjusted_tx_size = aom_av1_get_adjusted_tx_size(txsize);
     MacroblockPlane candidate_plane;
     const QmVal    *q_matrix  = pcs->ppcs->gqmatrix[qmatrix_level][plane][adjusted_tx_size];
     const QmVal    *iq_matrix = pcs->ppcs->giqmatrix[qmatrix_level][plane][adjusted_tx_size];
@@ -1730,7 +1736,7 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
 
     // If rdoq_level is specified in the command line instruction, set perform_rdoq accordingly.
     perform_rdoq = !svt_av1_is_lossless_segment(pcs, ctx->blk_ptr->segment_id) &&
-        ((ctx->mds_skip_rdoq == false || is_encode_pass) && ctx->rdoq_level);
+        ((ctx->mds_do_rdoq || is_encode_pass) && ctx->rdoq_level);
     const int dequant_shift = ctx->hbd_md ? pcs->ppcs->enhanced_pic->bit_depth - 5 : 3;
     const int qstep         = candidate_plane.dequant_qtx[1] /*[AC]*/ >> dequant_shift;
     if (!is_encode_pass) {
@@ -1752,6 +1758,7 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
     }
 
     if (perform_rdoq && ((!component_type && ctx->rdoq_ctrls.fp_q_y) || (component_type && ctx->rdoq_ctrls.fp_q_uv))) {
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
         if ((bit_depth > EB_EIGHT_BIT) || (is_encode_pass && scs->is_16bit_pipeline)) {
             svt_av1_highbd_quantize_fp_facade((TranLow *)coeff,
                                               n_coeffs,
@@ -1761,7 +1768,9 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
                                               eob,
                                               scan_order,
                                               &qparam);
-        } else {
+        } else
+#endif
+        {
             svt_av1_quantize_fp_facade((TranLow *)coeff,
                                        n_coeffs,
                                        &candidate_plane,
@@ -1772,6 +1781,7 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
                                        &qparam);
         }
     } else {
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
         if ((bit_depth > EB_EIGHT_BIT) || (is_encode_pass && scs->is_16bit_pipeline)) {
             svt_av1_highbd_quantize_b_facade((TranLow *)coeff,
                                              n_coeffs,
@@ -1781,7 +1791,9 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
                                              eob,
                                              scan_order,
                                              &qparam);
-        } else {
+        } else
+#endif
+        {
             av1_quantize_b_facade_ii((TranLow *)coeff,
                                      n_coeffs,
                                      &candidate_plane,
@@ -1804,6 +1816,7 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
                 (TranLow *)coeff, &candidate_plane, quant_coeff, (TranLow *)recon_coeff, eob, txsize, tx_type);
         }
         if (perform_rdoq == 0) {
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
             if ((bit_depth > EB_EIGHT_BIT) || (is_encode_pass && scs->is_16bit_pipeline)) {
                 svt_av1_highbd_quantize_b_facade((TranLow *)coeff,
                                                  n_coeffs,
@@ -1813,7 +1826,9 @@ uint8_t svt_aom_quantize_inv_quantize(PictureControlSet *pcs, ModeDecisionContex
                                                  eob,
                                                  scan_order,
                                                  &qparam);
-            } else {
+            } else
+#endif
+            {
                 av1_quantize_b_facade_ii((TranLow *)coeff,
                                          n_coeffs,
                                          &candidate_plane,
@@ -2020,7 +2035,7 @@ void svt_aom_full_loop_chroma_light_pd1(PictureControlSet *pcs, ModeDecisionCont
                                                                cand_bf->cand->transform_type_uv,
                                                                0,
                                                                0,
-                                                               cand_bf->cand->pred_mode,
+                                                               cand_bf->cand->block_mi.mode,
                                                                full_lambda,
                                                                false);
 
@@ -2033,8 +2048,8 @@ void svt_aom_full_loop_chroma_light_pd1(PictureControlSet *pcs, ModeDecisionCont
                                                       bheight,
                                                       cb_full_distortion,
                                                       cand_bf->eob.u[0],
-                                                      get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                                                      cand_bf->cand->interinter_comp.type,
+                                                      get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                                                      cand_bf->cand->block_mi.interinter_comp.type,
                                                       pcs->temporal_layer_index,
                                                       effective_ac_bias,
                                                       pcs->scs->static_config.spy_rd);
@@ -2108,7 +2123,7 @@ void svt_aom_full_loop_chroma_light_pd1(PictureControlSet *pcs, ModeDecisionCont
                                                                cand_bf->cand->transform_type_uv,
                                                                0,
                                                                0,
-                                                               cand_bf->cand->pred_mode,
+                                                               cand_bf->cand->block_mi.mode,
                                                                full_lambda,
                                                                false);
 
@@ -2121,8 +2136,8 @@ void svt_aom_full_loop_chroma_light_pd1(PictureControlSet *pcs, ModeDecisionCont
                                                       bheight,
                                                       cr_full_distortion,
                                                       cand_bf->eob.v[0],
-                                                      get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                                                      cand_bf->cand->interinter_comp.type,
+                                                      get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                                                      cand_bf->cand->block_mi.interinter_comp.type,
                                                       pcs->temporal_layer_index,
                                                       effective_ac_bias,
                                                       pcs->scs->static_config.spy_rd);
@@ -2177,9 +2192,11 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
     ctx->three_quad_energy = 0;
 
     const double effective_ac_bias = get_effective_ac_bias(pcs->scs->static_config.ac_bias, pcs->slice_type == I_SLICE, pcs->temporal_layer_index);
-    const uint8_t tx_depth = cand_bf->cand->tx_depth;
-    const bool    is_inter = (is_inter_mode(cand_bf->cand->pred_mode) || cand_bf->cand->use_intrabc) ? true : false;
-    const int     tu_count = tx_depth ? 1 : ctx->blk_geom->txb_count[cand_bf->cand->tx_depth]; //NM: 128x128 exeption
+    const uint8_t tx_depth = cand_bf->cand->block_mi.tx_depth;
+    const bool    is_inter = (is_inter_mode(cand_bf->cand->block_mi.mode) || cand_bf->cand->block_mi.use_intrabc) ? true
+                                                                                                                  : false;
+    const int     tu_count = tx_depth ? 1
+                                      : ctx->blk_geom->txb_count[cand_bf->cand->block_mi.tx_depth]; //NM: 128x128 exeption
     uint32_t      txb_1d_offset = 0;
 
     int txb_itr = 0;
@@ -2270,11 +2287,11 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                 cand_bf->cand->transform_type_uv,
                 ctx->cb_txb_skip_context,
                 ctx->cb_dc_sign_context,
-                cand_bf->cand->pred_mode,
+                cand_bf->cand->block_mi.mode,
                 full_lambda,
                 false);
 
-            if (is_full_loop && ctx->mds_spatial_sse) {
+            if (is_full_loop && ctx->mds_do_spatial_sse) {
                 uint32_t cb_has_coeff = cand_bf->eob.u[txb_itr] > 0;
 
                 if (cb_has_coeff)
@@ -2354,8 +2371,8 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                     cropped_tx_width_uv,
                     cropped_tx_height_uv,
                     ctx->hbd_md,
-                    get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                    cand_bf->cand->interinter_comp.type,
+                    get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                    cand_bf->cand->block_mi.interinter_comp.type,
                     pcs->temporal_layer_index,
                     effective_ac_bias,
                     pcs->scs->static_config.spy_rd);
@@ -2381,8 +2398,8 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                     cropped_tx_width_uv,
                     cropped_tx_height_uv,
                     ctx->hbd_md,
-                    get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                    cand_bf->cand->interinter_comp.type,
+                    get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                    cand_bf->cand->block_mi.interinter_comp.type,
                     pcs->temporal_layer_index,
                     effective_ac_bias,
                     pcs->scs->static_config.spy_rd);
@@ -2422,8 +2439,8 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                     bheight,
                     txb_full_distortion[DIST_SSD][1],
                     cand_bf->eob.u[txb_itr],
-                    get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                    cand_bf->cand->interinter_comp.type,
+                    get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                    cand_bf->cand->block_mi.interinter_comp.type,
                     pcs->temporal_layer_index,
                     effective_ac_bias,
                     pcs->scs->static_config.spy_rd);
@@ -2496,10 +2513,10 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                 cand_bf->cand->transform_type_uv,
                 ctx->cr_txb_skip_context,
                 ctx->cr_dc_sign_context,
-                cand_bf->cand->pred_mode,
+                cand_bf->cand->block_mi.mode,
                 full_lambda,
                 false);
-            if (is_full_loop && ctx->mds_spatial_sse) {
+            if (is_full_loop && ctx->mds_do_spatial_sse) {
                 uint32_t cr_has_coeff = cand_bf->eob.v[txb_itr] > 0;
 
                 if (cr_has_coeff)
@@ -2578,8 +2595,8 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                     cropped_tx_width_uv,
                     cropped_tx_height_uv,
                     ctx->hbd_md,
-                    get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                    cand_bf->cand->interinter_comp.type,
+                    get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                    cand_bf->cand->block_mi.interinter_comp.type,
                     pcs->temporal_layer_index,
                     effective_ac_bias,
                     pcs->scs->static_config.spy_rd);
@@ -2605,8 +2622,8 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                     cropped_tx_width_uv,
                     cropped_tx_height_uv,
                     ctx->hbd_md,
-                    get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                    cand_bf->cand->interinter_comp.type,
+                    get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                    cand_bf->cand->block_mi.interinter_comp.type,
                     pcs->temporal_layer_index,
                     effective_ac_bias,
                     pcs->scs->static_config.spy_rd);
@@ -2646,8 +2663,8 @@ void svt_aom_full_loop_uv(PictureControlSet *pcs, ModeDecisionContext *ctx, Mode
                     bheight,
                     txb_full_distortion[DIST_SSD][2],
                     cand_bf->eob.v[txb_itr],
-                    get_uv_mode_cfl_aware(cand_bf->cand->intra_chroma_mode),
-                    cand_bf->cand->interinter_comp.type,
+                    get_uv_mode_cfl_aware(cand_bf->cand->block_mi.uv_mode),
+                    cand_bf->cand->block_mi.interinter_comp.type,
                     pcs->temporal_layer_index,
                     effective_ac_bias,
                     pcs->scs->static_config.spy_rd);

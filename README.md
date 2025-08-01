@@ -89,7 +89,7 @@ Set the path to an HDR10+ JSON file for encoding HDR10+ video. SVT-AV1-PSY needs
 
 Manually adjust temporal filtering strength to adjust the trade-off between fewer artifacts in motion and fine detail retention. Each increment is a 2x increase in temporal filtering strength; the default value of 1 is 4x weaker than mainline SVT-AV1's default temporal filter (which would be equivalent to 3 here).
 
-- `--chroma-qm-min` & `--chroma-qm-max` *0 to 15*
+- `--chroma-qm-min` & `--chroma-qm-max` *0 to 15* (**[Merged to Mainline](https://gitlab.com/AOMediaCodec/SVT-AV1/-/merge_requests/2442)**)
 
 Set the minimum & maximum quantization matrices for chroma planes. The defaults are 8 and 15, respectively. These options decouple chroma quantization matrix control from the luma quantization matrix options currently available, allowing for more control over chroma quality.
 
@@ -115,12 +115,15 @@ Adaptively varies temporal filtering strength based on 64x64 block error. This c
 
 - `--ac-bias` *0.0 to 8.0*
 
-Configures psychovisual rate distortion strength to improve perceived quality by measuring and attempting to preserve the visual energy distribution of high-frequency details and textures. The default is 0.
+Configures psychovisual rate distortion strength to improve perceived quality by measuring and attempting to preserve the visual energy distribution of high-frequency details and textures. The default is 1.0.
 
 - `--spy-rd` *0 to 2*
 
 Configure psychovisually-oriented pathways that bias towards sharpness and detail retention, at the possible expense of increased blocking and banding. The default is 0, with 1 being the most aggressive and 2 being less aggressive.
 
+- `--alt-ssim-tuning` *0 and 1*
+
+Enables VQ psychovisual optimizations from tune 0, as well as changing SSIM rate-distortion calculations by utilizing an alternative per-pixel variance function across 4X4, 8X8, and 16X16 blocks in addition to superblock-level SSIM rate-distortion tuning. Currently only operates on tunes 2 & 4. The default is 0.
 
 ### Modified Defaults
 
@@ -134,7 +137,7 @@ SVT-AV1-PSY has different defaults than mainline SVT-AV1 in order to provide bet
 - `--enable-variance-boost` enabled by default.
 - `--keyint -2` (the default) uses a ~10s GOP size instead of ~5s.
 - `--sharpness 1` by default to prioritize encoder sharpness.
-- Sharp transform optimizations (`--sharp-tx 1`) are enabled by default to supercharge svt-av1-psy ac-bias optimizations. It is recommended to disable it if you don't use `--ac-bias`, which is set to 0.5 by default.
+- Sharp transform optimizations (`--sharp-tx 1`) are enabled by default to supercharge svt-av1-psy ac-bias optimizations. It is recommended to disable it if you don't use `--ac-bias`, which is set to 1.0 by default.
 - `--tf-strength 1` by default for much lower alt-ref temporal filtering to decrease blur for cleaner encoding.
 - `--kf-tf-strength 1` controls are available to the user and are set to 1 by default to remove KF artifacts.
 

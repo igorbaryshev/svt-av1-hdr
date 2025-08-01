@@ -170,9 +170,6 @@ if -%1-==-- (
 ) else if /I "%1"=="no-apps" (
     set "cmake_eflags=%cmake_eflags% -DBUILD_APPS=OFF"
     shift
-) else if /I "%1"=="external-cpuinfo" (
-    set "cmake_eflags=%cmake_eflags% -DUSE_EXTERNAL_CPUINFO=ON"
-    shift
 )  else (
     echo Unknown argument "%1"
     call :help
@@ -182,6 +179,6 @@ goto :args
 
 :help
     echo Batch file to build SVT-AV1 on Windows
-    echo Usage: build.bat [2022^|2019^|2017^|2015^|clean] [release^|debug] [nobuild] [test] [shared^|static] [c-only] [no-avx512] [enable-libdovi] [no-apps] [no-enc] [external-cpuinfo]
+    echo Usage: build.bat [2022^|2019^|2017^|2015^|clean] [release^|debug] [nobuild] [test] [shared^|static] [c-only] [no-avx512] [enable-libdovi] [no-apps] [no-enc]
     exit /b 1
 goto :EOF

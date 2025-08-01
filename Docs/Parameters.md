@@ -80,7 +80,9 @@ For more information on valid values for specific keys, refer to the [EbEncSetti
 | **Tune**                         | --tune                      | [0-4]                          | 1           | Optimize the encoding process for different desired outcomes [0 = VQ, 1 = PSNR, 2 = SSIM, 3 = Film Grain, 4 = Still Picture] |
 | **Sharpness**                    | --sharpness                 | [-7-7]                         | 1           | Bias towards block sharpness in rate-distortion optimization of transform coefficients                                                                               |
 | **Max32TxSize**                  | --max-32-tx-size            | [0-1]                          | 0           | Restricts use of block transform sizes to a maximum of 32x32 pixels (disabled: use max of 64x64 pixels)      |
+| **AltSSIMTuning**                | --alt-ssim-tuning           | [0-1]                          | 0           | Enables the usage of VQ optimizations and an alternative SSIM calculation pathway (Only operates with tunes 2 & 4)      |
 | **NoiseNormStrength**            |  --noise-norm-strength      | [0-4]                          | 0           | Selectively boost AC coefficients to improve fine detail retention in certain circumstances                  |
+| **AdaptiveFilmGrain**            | --adaptive-film-grain       | [0,1]                          | 1           | Allows film grain synthesis to be sourced from different block sizes depending on resolution                  |
 
 ## Rate Control Options
 
@@ -103,8 +105,8 @@ For more information on valid values for specific keys, refer to the [EbEncSetti
 | **AcBias**                        | --ac-bias                         | [0.0-8.0]  | 1.0         | Use psychovisual rate distortion optimization                                                                                                        |
 | **SpyRd**                        | --spy-rd                         | [0-2]      | 0           | Use alternate psychovisual rate distortion pathways (more sharpness and detail, slightly more chances of banding and blocking)                   |
 | **SharpTX**                      | --sharp-tx                       | [0-1]      | 1           | Activation of sharp transform optimizations for higher fidelity encoding (cleaner output with slightly higher chances of artifacting)                |
-| **HBDMDS**                        | --hbd-mds                         | [0-3]      | 0           | Activation of high bit depth mode decisions (0: default behavior, 1: full 10b MD, 2: hybrid 8/10b MD, 3: full 8b MD)                                  |
-| **COMPLEXHVS**                        | --complex-hvs                         | [0-1]      | 0           | Activation of highest complexity HVS model (0: default behavior, 1: enable highest complexity HVS model)                                  |
+| **HBDMDS**                        | --hbd-mds                         | [0-2]      | 0           | Activation of high bit depth mode decisions (0: default behavior, 1: full 10b MD, 2: hybrid 8/10b MD)                                              |
+| **COMPLEXHVS**                        | --complex-hvs                         | [0-1]      | 0           | Activation of highest complexity HVS model (0: default behavior, 1: enable highest complexity HVS model)                                   |
 | **QpScaleCompressStrength**      | --qp-scale-compress-strength     | [0.0-8.0]      | 1           | Sets the strength the QP scale algorithm compresses values across all temporal layers, which results in more consistent video quality (less quality variation across frames in a mini-gop) [0.0: SVT-AV1 default, 1.0: SVT-AV1-PSY default, 0.0-3.0: recommended range] |
 | **UseFixedQIndexOffsets**        | --use-fixed-qindex-offsets       | [0-2]      | 0           | Overwrite the encoder default hierarchical layer based QP assignment and use fixed Q index offsets                                                   |
 | **KeyFrameQIndexOffset**         | --key-frame-qindex-offset        | [-64-63]   | 0           | Overwrite the encoder default keyframe Q index assignment                                                                                            |
@@ -138,7 +140,7 @@ For more information on valid values for specific keys, refer to the [EbEncSetti
 | **LuminanceQpBias**              | --luminance-qp-bias              | [0-100]    | 0           | Adjusts a frame's QP based on its average luma value                                                                                                 |
 | **Sharpness**                    | --sharpness                      | [-7-7]     | 0           | Bias towards decreased/increased sharpness                                                                                                           |
 | **KFTemporalFilteringStrength**  | --kf-tf-strength                 | [0-4]      | 1           | Manually adjust alt-ref temporal filtering strengh on keyframes. Higher values = stronger alt-ref temporal filtering                                 |
-
+| **AltLambdaFactors**             | --alt-lambda-factors             | [0-1]      | 1           | Use alternative RDO lambda factors (from SVT-AV1 3.0.2)                                                                                              |
 
 ### **UseFixedQIndexOffsets** and more information
 
@@ -185,7 +187,7 @@ For this command line, corresponding qindex values are:
 With `EnableQM`, `MinQmLevel` and `MaxQmLevel`, user can customize the quantization
 matrix used in luma quantization procedure (`MinChromaQmLevel` & `MaxChromaQmLevel` for chroma control)
 instead of using the default one. With the default quantization matrix, all coefficients share the
-same weight, whereas with non-default ones, coefficients can have different weight through
+same weight, whereas with non-default ones, coefficients can have different weight throughMore actions
 the settings made by users. The deviation of weight (or flatness, equivalently)
 is controlled by arguments `MinQmLevel` and `MaxQmLevel`. There are sixteen quantization matrix levels,
 ranging from level 0 to level 15. The lower the level is the larger deviation of weight the
@@ -270,6 +272,7 @@ SvtAv1EncApp -i in.y4m -b out.ivf --roi-map-file roi_map.txt
 | **ForceKeyFrames**               | --force-key-frames    | any string      | None              | Force key frames at the comma separated specifiers. `#f` for frames, `#.#s` for seconds                                                                      |
 | **EnableDg**                     | --enable-dg           | [0-1]           | 1                 | Enable Dynamic GoP. The algorithm changes the hierarchical structure based on the content                                                                    |
 | **StartupMgSize**                | --startup-mg-size     | [0, 2, 3, 4]    | 0                 | Specify another mini-gop configuration for the first mini-gop after the key-frame [0: OFF, 2: 3 temporal layers, 3: 4 temporal layers, 4: 5 temporal layers] |
+| **RealTime**                     | --rtc                 | [0-1]           | 0                 | Enables fast settings for real-time communication when using low-delay mode. Forces low-delay pred struct to be used.                                        |
 
 ### AV1 Specific Options
 

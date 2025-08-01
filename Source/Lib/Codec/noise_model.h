@@ -207,6 +207,7 @@ typedef struct DenoiseAndModelInitData {
     uint16_t stride_cb;
     uint16_t stride_cr;
     uint8_t  denoise_apply;
+    bool     adaptive_film_grain;
 } DenoiseAndModelInitData;
 
 typedef struct AomDenoiseAndModel {
@@ -385,7 +386,6 @@ static INLINE void multiply_mat_n_3_1(const double *m1, const double *m2, double
         *(res++) = sum;
     }
 }
-
 #ifdef __cplusplus
 } // extern "C"
 #endif // __cplusplus

@@ -120,6 +120,7 @@ elseif (MIMALLOC_FOUND AND UNIX)
 endif()
 
 set(all_files
+    ../API/EbConfigMacros.h
     ../API/EbDebugMacros.h
     ../API/EbSvtAv1.h
     ../API/EbSvtAv1Enc.h

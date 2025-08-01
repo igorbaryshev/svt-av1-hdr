@@ -296,4 +296,3 @@ set(all_files
         )
 
 add_library(CODEC OBJECT ${all_files})
-target_link_libraries(CODEC PUBLIC cpuinfo::cpuinfo)

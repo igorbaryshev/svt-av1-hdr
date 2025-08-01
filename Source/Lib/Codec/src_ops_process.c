@@ -380,7 +380,7 @@ static uint32_t blk_end_array[MAX_TPL_MODE]      = {20, 4, 0};
 static TxSize   tx_size_array[MAX_TPL_MODE]      = {TX_16X16, TX_32X32, TX_64X64};
 static TxSize   sub2_tx_size_array[MAX_TPL_MODE] = {TX_16X8, TX_32X16, TX_64X32};
 static TxSize   sub4_tx_size_array[MAX_TPL_MODE] = {TX_16X4, TX_32X8, TX_64X16};
-static void     svt_tpl_init_mv_cost_params(MV_COST_PARAMS *mv_cost_params, const MV *ref_mv, uint8_t base_q_idx,
+static void     svt_tpl_init_mv_cost_params(MV_COST_PARAMS *mv_cost_params, const Mv *ref_mv, uint8_t base_q_idx,
                                             uint32_t rdmult, uint8_t hbd_md) {
     mv_cost_params->ref_mv        = ref_mv;
     mv_cost_params->full_ref_mv   = get_fullmv_from_mv(ref_mv);
@@ -417,7 +417,7 @@ static void init_xd_tpl(MacroBlockD *xd, const Av1Common *const cm, const BlockS
 // best_mv inputs the starting full-pel MV, around which subpel search is to be performed and outputs the new best subpel MV
 static void tpl_subpel_search(SequenceControlSet *scs, PictureParentControlSet *pcs, EbPictureBufferDesc *ref_pic,
                               EbPictureBufferDesc *input_pic, MacroBlockD *xd, const uint32_t mb_origin_x,
-                              const uint32_t mb_origin_y, const uint8_t bsize, MV *best_mv) {
+                              const uint32_t mb_origin_y, const uint8_t bsize, Mv *best_mv) {
     const Av1Common *const cm         = pcs->av1_cm;
     const BlockSize        block_size = bsize == 8 ? BLOCK_8X8
                : bsize == 16                       ? BLOCK_16X16
@@ -425,9 +425,8 @@ static void tpl_subpel_search(SequenceControlSet *scs, PictureParentControlSet *
                                                    : BLOCK_64X64;
 
     // ref_mv is used to calculate the cost of the motion vector
-    MV ref_mv;
-    ref_mv.col = 0;
-    ref_mv.row = 0;
+    Mv ref_mv;
+    ref_mv.as_int = 0;
     // High level params
     SUBPEL_MOTION_SEARCH_PARAMS  ms_params_struct;
     SUBPEL_MOTION_SEARCH_PARAMS *ms_params = &ms_params_struct;
@@ -483,13 +482,14 @@ static void tpl_subpel_search(SequenceControlSet *scs, PictureParentControlSet *
     src_struct.stride = input_pic->stride_y;
     ms_buffers->src   = &src_struct;
 
-    int_mv best_sp_mv;
-    best_sp_mv.as_mv.col = best_mv->col >> 3;
-    best_sp_mv.as_mv.row = best_mv->row >> 3;
+    Mv best_sp_mv;
+    // TODO: should use get_fullmv_from_mv instead of shifting
+    best_sp_mv.x       = best_mv->x >> 3;
+    best_sp_mv.y       = best_mv->y >> 3;
+    Mv subpel_start_mv = get_mv_from_fullmv(&best_sp_mv);
 
-    int          not_used        = 0;
-    MV           subpel_start_mv = get_mv_from_fullmv(&best_sp_mv.as_fullmv);
-    unsigned int pred_sse        = 0; // not used
+    int          not_used = 0;
+    unsigned int pred_sse = 0; // not used
 
     // Assign which subpel search method to use - always use pruned because tested regular and did not give any gain
     fractional_mv_step_fp *subpel_search_method = svt_av1_find_best_sub_pixel_tree_pruned;
@@ -504,7 +504,7 @@ static void tpl_subpel_search(SequenceControlSet *scs, PictureParentControlSet *
                          (const struct AV1Common *const)cm,
                          ms_params,
                          subpel_start_mv,
-                         &best_sp_mv.as_mv,
+                         &best_sp_mv,
                          &not_used,
                          &pred_sse,
                          qIndex,
@@ -512,8 +512,7 @@ static void tpl_subpel_search(SequenceControlSet *scs, PictureParentControlSet *
                          early_exit);
 
     // Update the MV to the new best
-    best_mv->col = best_sp_mv.as_mv.col;
-    best_mv->row = best_sp_mv.as_mv.row;
+    best_mv->as_int = best_sp_mv.as_int;
 }
 
 static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceControlSet *scs,
@@ -594,7 +593,7 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
         uint64_t best_ref_poc = 0;
         int32_t  best_rf_idx  = -1;
 
-        MV final_best_mv = {0, 0};
+        Mv final_best_mv = {{0, 0}};
 
         uint8_t best_mode = DC_PRED;
         memset(&tpl_stats, 0, sizeof(tpl_stats));
@@ -783,8 +782,8 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                 const uint32_t rf_idx    = svt_get_ref_frame_type(list_index, ref_pic_index) - 1;
                 const uint32_t me_offset = me_mb_offset * pcs->pa_me_data->max_refs +
                     (list_index ? pcs->pa_me_data->max_l0 : 0) + ref_pic_index;
-                x_curr_mv = (me_results->me_mv_array[me_offset].x_mv) << 3;
-                y_curr_mv = (me_results->me_mv_array[me_offset].y_mv) << 3;
+                x_curr_mv = (me_results->me_mv_array[me_offset].x) << 3;
+                y_curr_mv = (me_results->me_mv_array[me_offset].y) << 3;
 
                 ref_pic_ptr =
                     (EbPictureBufferDesc *)pcs->tpl_data.tpl_ref_ds_ptr_array[list_index][ref_pic_index].picture_ptr;
@@ -801,17 +800,17 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                 if (((int)mb_origin_y + (int)bsize + (y_curr_mv >> 3)) > (TPL_PADY + (int)ref_pic_ptr->max_height - 1))
                     y_curr_mv = ((TPL_PADY + ref_pic_ptr->max_height - 1) - (mb_origin_y + bsize)) << 3;
 
-                MV best_mv = {y_curr_mv, x_curr_mv};
+                Mv best_mv = {{x_curr_mv, y_curr_mv}};
 
                 if (pcs->tpl_ctrls.subpel_depth != FULL_PEL) {
                     tpl_subpel_search(scs, pcs, ref_pic_ptr, input_pic, &xd, mb_origin_x, mb_origin_y, bsize, &best_mv);
                 }
-                int32_t ref_origin_index = (int32_t)ref_pic_ptr->org_x + ((int32_t)mb_origin_x + (best_mv.col / 8)) +
-                    ((int32_t)mb_origin_y + (best_mv.row / 8) + (int32_t)ref_pic_ptr->org_y) *
+                int32_t ref_origin_index = (int32_t)ref_pic_ptr->org_x + ((int32_t)mb_origin_x + (best_mv.x / 8)) +
+                    ((int32_t)mb_origin_y + (best_mv.y / 8) + (int32_t)ref_pic_ptr->org_y) *
                         (int32_t)ref_pic_ptr->stride_y;
 
                 // Need to do compensation for subpel, otherwise, can get pixels directly from REF picture
-                uint8_t subpel_mv = (best_mv.col & 0x7 || best_mv.row & 0x7);
+                uint8_t subpel_mv = (best_mv.x & 0x7 || best_mv.y & 0x7);
                 if (subpel_mv) {
                     DECLARE_ALIGNED(32, uint16_t, tmp_dst_y[MAX_TPL_SAMPLES_PER_BLOCK]);
                     DECLARE_ALIGNED(16, uint8_t, seg_mask[2 * MAX_TPL_SAMPLES_PER_BLOCK]);
@@ -845,7 +844,9 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                         8, // Always use 8bit for now
                         0, // use_intrabc,
                         0,
-                        0); // is16bit
+                        false, // is16bit
+                        false, // is_wm
+                        NULL); // wm_params
                 }
 
                 if (pcs->tpl_ctrls.use_sad_in_src_search) {
@@ -894,11 +895,11 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                     uint32_t ref_pic_index = best_rf_idx >= 4 ? (best_rf_idx - 4) : best_rf_idx;
                     ref_pic_ptr            = pcs->tpl_data.tpl_ref_ds_ptr_array[list_index][ref_pic_index].picture_ptr;
                     int32_t ref_origin_index = (int32_t)ref_pic_ptr->org_x +
-                        ((int32_t)mb_origin_x + (final_best_mv.col >> 3)) +
-                        ((int32_t)mb_origin_y + (final_best_mv.row >> 3) + (int32_t)ref_pic_ptr->org_y) *
+                        ((int32_t)mb_origin_x + (final_best_mv.x >> 3)) +
+                        ((int32_t)mb_origin_y + (final_best_mv.y >> 3) + (int32_t)ref_pic_ptr->org_y) *
                             (int32_t)ref_pic_ptr->stride_y;
                     // Need to do compensation for subpel, otherwise, can get pixels directly from REF picture
-                    uint8_t subpel_mv = (final_best_mv.col & 0x7 || final_best_mv.row & 0x7);
+                    uint8_t subpel_mv = (final_best_mv.x & 0x7 || final_best_mv.y & 0x7);
                     if (subpel_mv) {
                         DECLARE_ALIGNED(32, uint16_t, tmp_dst_y[MAX_TPL_SAMPLES_PER_BLOCK]);
                         DECLARE_ALIGNED(16, uint8_t, seg_mask[2 * MAX_TPL_SAMPLES_PER_BLOCK]);
@@ -932,7 +933,9 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                             8, // Always use 8bit for now
                             0, // use_intrabc,
                             0,
-                            0); // is16bit
+                            false, // is16bit
+                            false, // is_wm
+                            NULL); // wm_params
                     }
 
                     svt_aom_subtract_block(size >> tpl_ctrls->subsample_tx,
@@ -992,12 +995,12 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                 ref_pic_ptr =
                     (EbPictureBufferDesc *)pcs->tpl_data.tpl_ref_ds_ptr_array[list_index][ref_pic_index].picture_ptr;
 
-            int32_t ref_origin_index = (int32_t)ref_pic_ptr->org_x + ((int32_t)mb_origin_x + (final_best_mv.col >> 3)) +
-                ((int32_t)mb_origin_y + (final_best_mv.row >> 3) + (int32_t)ref_pic_ptr->org_y) *
+            int32_t ref_origin_index = (int32_t)ref_pic_ptr->org_x + ((int32_t)mb_origin_x + (final_best_mv.x >> 3)) +
+                ((int32_t)mb_origin_y + (final_best_mv.y >> 3) + (int32_t)ref_pic_ptr->org_y) *
                     (int32_t)ref_pic_ptr->stride_y;
             // REDO COMPENSATION WITH REF PIC (INSTEAD OF REF BEING THE SRC PIC)
             // Need to do compensation for subpel, otherwise, can get pixels directly from RECON picture
-            uint8_t subpel_mv = (final_best_mv.col & 0x7 || final_best_mv.row & 0x7);
+            uint8_t subpel_mv = (final_best_mv.x & 0x7 || final_best_mv.y & 0x7);
             if (subpel_mv) {
                 DECLARE_ALIGNED(32, uint16_t, tmp_dst_y[MAX_TPL_SAMPLES_PER_BLOCK]);
                 DECLARE_ALIGNED(16, uint8_t, seg_mask[2 * MAX_TPL_SAMPLES_PER_BLOCK]);
@@ -1031,7 +1034,9 @@ static void tpl_mc_flow_dispenser_sb_generic(EncodeContext *enc_ctx, SequenceCon
                     8, // Always 8bit,
                     0, // use_intrabc,
                     0,
-                    0); // is16bit
+                    false, // is16bit
+                    false, // is_wm
+                    NULL); // wm_params
             } else {
                 for (int i = 0; i < (int)size; ++i)
                     EB_MEMCPY(dst_buffer + i * dst_buffer_stride,
@@ -1483,9 +1488,9 @@ static AOM_INLINE void tpl_model_update_b(PictureParentControlSet *ref_pcs_ptr, 
     Av1Common *ref_cm = ref_pcs_ptr->av1_cm;
     TplStats  *ref_tpl_stats_ptr;
 
-    const FULLPEL_MV full_mv     = get_fullmv_from_mv(&tpl_stats_ptr->mv);
-    const int        ref_pos_row = mi_row * MI_SIZE + full_mv.row;
-    const int        ref_pos_col = mi_col * MI_SIZE + full_mv.col;
+    const Mv  full_mv     = get_fullmv_from_mv(&tpl_stats_ptr->mv);
+    const int ref_pos_row = mi_row * MI_SIZE + full_mv.y;
+    const int ref_pos_col = mi_col * MI_SIZE + full_mv.x;
 
     const int bw         = 4 << mi_size_wide_log2[bsize];
     const int bh         = 4 << mi_size_high_log2[bsize];
@@ -1697,8 +1702,8 @@ static void init_tpl_segments(SequenceControlSet *scs, PictureParentControlSet *
 
         const int tile_cols       = pcs->av1_cm->tiles_info.tile_cols;
         const int tile_rows       = pcs->av1_cm->tiles_info.tile_rows;
-        uint8_t   tile_group_cols = MIN(tile_cols, scs->tile_group_col_count_array[pcs->temporal_layer_index]);
-        uint8_t   tile_group_rows = MIN(tile_rows, scs->tile_group_row_count_array[pcs->temporal_layer_index]);
+        uint8_t   tile_group_cols = MIN(tile_cols, scs->tile_group_col_count_array);
+        uint8_t   tile_group_rows = MIN(tile_rows, scs->tile_group_row_count_array);
 
         // Valid when only one tile used
         // TPL segments + tiles (not working)
@@ -1940,7 +1945,7 @@ static EbErrorType tpl_mc_flow(EncodeContext *enc_ctx, SequenceControlSet *scs, 
     bool release_pa_ref = (scs->static_config.superres_mode <= SUPERRES_RANDOM) ? true : false;
     for (uint32_t i = 0; i < pcs->tpl_group_size; i++) {
         if (release_pa_ref) {
-            if (pcs->tpl_group[i]->slice_type == P_SLICE) {
+            if (svt_aom_is_incomp_mg_frame(pcs->tpl_group[i])) {
                 if (pcs->tpl_group[i]->ext_mg_id == pcs->ext_mg_id + 1)
                     svt_aom_release_pa_reference_objects(scs, pcs->tpl_group[i]);
             } else {
@@ -2114,6 +2119,65 @@ unsigned int svt_aom_get_perpixel_variance(const uint8_t *buf, uint32_t stride, 
     var                            = fn_ptr->vf(buf, stride, AV1_VAR_OFFS, 0, &sse);
     return ROUND_POWER_OF_TWO(var, num_pels_log2_lookup[block_size]);
 }
+void svt_aom_get_mean_and_perpixel_variance(const uint8_t *buf, uint32_t stride, const int block_size,
+                                          uint32_t *perpixel_var, uint32_t *mean) {
+    const int block_w = block_size_wide[block_size];
+    const int block_h = block_size_high[block_size];
+    
+    uint64_t sum = 0;
+    uint64_t sse = 0;
+
+    // First pass: calculate sum
+    for (int r = 0; r < block_h; ++r) {
+        const uint8_t* row = buf + r * stride;
+        for (int c = 0; c < block_w; ++c) {
+            sum += row[c];
+        }
+    }
+    *mean = (uint32_t)ROUND_POWER_OF_TWO(sum, num_pels_log2_lookup[block_size]);
+
+    // Second pass: calculate sum of squared errors
+    for (int r = 0; r < block_h; ++r) {
+        for (int c = 0; c < block_w; ++c) {
+            const int diff = buf[r * stride + c] - *mean;
+            sse += diff * diff;
+        }
+    }
+    
+    *perpixel_var = (uint32_t)ROUND_POWER_OF_TWO(sse, num_pels_log2_lookup[block_size]);
+}
+unsigned int svt_aom_get_perceptual_perpixel_variance(const uint8_t *buf, uint32_t stride, const int block_size) {
+    unsigned int var, mean;
+    
+    // In a real implementation, you would use an optimized AVX2 function
+    // that calculates mean and variance in one go. For this example, we use our helper.
+    // The existing svt_aom_mefn_ptr->vf can't be used as it doesn't expose the mean.
+    svt_aom_get_mean_and_perpixel_variance(buf, stride, block_size, &var, &mean);
+
+    // HVS is most sensitive around mid-grays (e.g., 110-140 for 8-bit video).
+    // We create a weight that is highest in this range and falls off towards black and white.
+    // A simple parabolic function centered at 128 is a good model.
+    // weight = 1.0 - (|mean - 128| / 128)^2
+    // We can use integer arithmetic for speed.
+    int centered_mean = (int)mean - 128;
+    int weight_numerator = 128 * 128 - centered_mean * centered_mean; // (128 - |mean-128|) * (128 + |mean-128|)
+    
+    // Scale the weight to avoid floating point math. e.g., 256 is 1.0x
+    // The final weight will be in [0, 256].
+    int weight = (weight_numerator * 256) / (128 * 128);
+    
+    // Let's invert the weight's effect. We want to increase the variance
+    // value for mid-tones, making the encoder think they are more complex and
+    // deserving of bits. A simple way is to scale by a factor > 1.0.
+    // A better perceptual weight boosts the importance of mid-tones.
+    // Let's define a boost factor, e.g., boosting it by up to 50%, or use another equation (var + var*weight / sqrt(var + 1))
+    //unsigned int perceptual_var = var * (1.0 + weight);
+    unsigned int perceptual_var = var + ((var * weight) / sqrtf(var + 1.));
+
+    //fprintf(stdout, "%.4u\t", perceptual_var);
+
+    return perceptual_var;
+}
 static void aom_av1_set_mb_ssim_rdmult_scaling(PictureParentControlSet *pcs) {
     if (!pcs->scs->static_config.enable_tpl_la) // tuning rdmult with SSIM requires TPL ME data
         return;
@@ -2147,16 +2211,53 @@ static void aom_av1_set_mb_ssim_rdmult_scaling(PictureParentControlSet *pcs) {
             double    var = 0.0, num_of_var = 0.0;
             const int index = row * num_cols + col;
 
-            // Loop through each 8x8 block.
-            for (int mi_row = row * num_mi_h; mi_row < cm->mi_rows && mi_row < (row + 1) * num_mi_h; mi_row += 2) {
-                for (int mi_col = col * num_mi_w; mi_col < cm->mi_cols && mi_col < (col + 1) * num_mi_w; mi_col += 2) {
-                    const int row_offset_y = mi_row << 2;
-                    const int col_offset_y = mi_col << 2;
+            if (pcs->scs->static_config.alt_ssim_tuning) {
+                const int mi_row = row << 2;
+                const int mi_col = col << 2;
+                const int row_offset_y = row << 2;
+                const int col_offset_y = col << 2;
 
-                    const uint8_t *buf = y_buffer + row_offset_y * y_stride + col_offset_y;
+                // Loop through each 4x4 block within the 16x16 block.
+                for (int mi_row_3 = mi_row; mi_row_3 < cm->mi_rows && mi_row_3 < (row + 1) * num_mi_h; mi_row_3 += 1) {
+                    for (int mi_col_3 = mi_col; mi_col_3 < cm->mi_cols && mi_col_3 < (col + 1) * num_mi_w; mi_col_3 += 1) {
+                        const int row_offset_y_3 = mi_row_3 << 2;
+                        const int col_offset_y_3 = mi_col_3 << 2;
 
-                    var += svt_aom_get_perpixel_variance(buf, y_stride, BLOCK_8X8);
-                    num_of_var += 1.0;
+                        const uint8_t *buf3 = y_buffer + row_offset_y_3 * y_stride + col_offset_y_3;
+
+                        var += svt_aom_get_perceptual_perpixel_variance(buf3, y_stride, BLOCK_4X4);
+                        num_of_var += 0.015625; // Weigh at 1x weight (0.25 of total num_of_var)
+                    }
+                }
+                // Loop through each 8x8 block within the 16x16 block.
+                for (int mi_row_2 = mi_row; mi_row_2 < cm->mi_rows && mi_row_2 < (row + 1) * num_mi_h; mi_row_2 += 2) {
+                    for (int mi_col_2 = mi_col; mi_col_2 < cm->mi_cols && mi_col_2 < (col + 1) * num_mi_w; mi_col_2 += 2) {
+                        const int row_offset_y_2 = mi_row_2 << 2;
+                        const int col_offset_y_2 = mi_col_2 << 2;
+
+                        const uint8_t *buf2 = y_buffer + row_offset_y_2 * y_stride + col_offset_y_2;
+
+                        var += svt_aom_get_perceptual_perpixel_variance(buf2, y_stride, BLOCK_8X8);
+                        num_of_var += 0.125; // This weight (8x8 block) is 2x more important compared to other num_of_var additions
+                                             // (0.5 of total num_of_var)
+                    }
+                }
+                const uint8_t *buf = y_buffer + row_offset_y * y_stride + col_offset_y;
+
+                var += svt_aom_get_perceptual_perpixel_variance(buf, y_stride, BLOCK_16X16);
+                num_of_var += 0.25; // Weigh at 1x weight (0.25 of total num_of_var)
+            } else {
+                // Loop through each 8x8 block.
+                for (int mi_row = row * num_mi_h; mi_row < cm->mi_rows && mi_row < (row + 1) * num_mi_h; mi_row += 2) {
+                    for (int mi_col = col * num_mi_w; mi_col < cm->mi_cols && mi_col < (col + 1) * num_mi_w; mi_col += 2) {
+                        const int row_offset_y = mi_row << 2;
+                        const int col_offset_y = mi_col << 2;
+
+                        const uint8_t *buf = y_buffer + row_offset_y * y_stride + col_offset_y;
+
+                        var += svt_aom_get_perpixel_variance(buf, y_stride, BLOCK_8X8);
+                        num_of_var += 1.0;
+                    }
                 }
             }
 
@@ -2176,7 +2277,7 @@ static void aom_av1_set_mb_ssim_rdmult_scaling(PictureParentControlSet *pcs) {
             }
         }
     }
-    if (pcs->scs->static_config.tune != 3) {
+    if (!pcs->scs->static_config.alt_ssim_tuning) {
         log_sum = exp(log_sum / (double)(num_rows * num_cols));
         if (do_print) {
             fprintf(stdout, "\nlog_sum %.4f\n", log_sum);
@@ -2205,7 +2306,7 @@ static void aom_av1_set_mb_ssim_rdmult_scaling(PictureParentControlSet *pcs) {
                 }
             }
         }
-    } else { // Do superblock-based adjustment if we're on Tune 3
+    } else { // Do superblock-based adjustment if we're using alternative SSIM tuning
         const int sb_size = pcs->scs->seq_header.sb_size;
         const int num_mi_w_sb = mi_size_wide[sb_size];
         const int num_mi_h_sb = mi_size_high[sb_size];
