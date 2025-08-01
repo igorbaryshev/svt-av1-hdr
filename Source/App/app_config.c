@@ -936,13 +936,17 @@ ConfigDescription config_entry_specific[] = {
      "Apply denoising when film grain is ON, default is 0 [0: no denoising, film grain data is "
      "still in frame header, 1: level of denoising is set by the film-grain parameter]"},
 
-    {FILM_GRAIN_CROP_TOKEN, "Set film grain estimation crop area in format width:height[:offset_x:offset_y], default is 100:100:0:0 [0-100:0-100:0-100:0-100]"},
+    {FILM_GRAIN_CROP_TOKEN,
+     "Set film grain estimation crop area in format width:height[:offset_x:offset_y], "
+     "default is 100:100:0:0 [0-100:0-100:0-100:0-100]"},
     
     {FILM_GRAIN_INT_TOKEN, "Film grain parameter estimation interval, default is 1 [0: infinite, 1: every frame, 2-50: every N-th frame]"},
 
     {STARTUP_FG_LENGTH_TOKEN, "Film grain estimation startup frames, default is 0 [0: no startup, > 0: estimate first N frames with --startup-fg-int]"},
 
-    {STARTUP_FG_INT_TOKEN, "Specify another film grain estimation startup interval for first --startup-fg-length frames, if specified, default is 2 [0: infinite, 1-50: every N-th frame]"},
+    {STARTUP_FG_INT_TOKEN,
+     "Specify another film grain estimation startup interval for first --startup-fg-length frames, if specified, "
+     "default is 2 [0: infinite, 1-50: every N-th frame]"},
 
     {PHOTON_NOISE_TOKEN, "Generate photon noise table for film grain, default is 0 [0: off, 1-50: predefined ISO values, >50: literal ISO values]"},
 
