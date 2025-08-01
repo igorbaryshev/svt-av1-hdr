@@ -14,12 +14,6 @@
 
 #include <stdio.h>
 #include <stdbool.h>
-#ifdef LIBDOVI_FOUND
-#include <libdovi/rpu_parser.h>
-#endif
-#ifdef LIBHDR10PLUS_RS_FOUND
-#include <libhdr10plus-rs/hdr10plus.h>
-#endif
 
 #ifdef MIMALLOC_FOUND
 #include <mimalloc.h>
