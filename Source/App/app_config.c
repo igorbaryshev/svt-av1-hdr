@@ -90,6 +90,7 @@
 #define LEVEL_TOKEN "--level"
 #define FILM_GRAIN_TOKEN "--film-grain"
 #define FILM_GRAIN_DENOISE_APPLY_TOKEN "--film-grain-denoise"
+#define FILM_GRAIN_CROP_TOKEN "--film-grain-crop"
 #define INTRA_REFRESH_TYPE_TOKEN "--irefresh-type" // no Eval
 #define CDEF_ENABLE_TOKEN "--enable-cdef"
 #define SCREEN_CONTENT_TOKEN "--scm"
@@ -910,6 +911,10 @@ ConfigDescription config_entry_specific[] = {
      "Apply denoising when film grain is ON, default is 0 [0: no denoising, film grain data is "
      "still in frame header, 1: level of denoising is set by the film-grain parameter]"},
 
+    {FILM_GRAIN_CROP_TOKEN,
+     "Set film grain estimation crop area in format <width_%>:<height_%>[:<offset_x_%>:<offset_y_%>], default is "
+     "100:100:0:0 (full frame) [0-100:0-100:0-100:0-100]"},
+
     {FGS_TABLE_TOKEN, "Set the film grain model table path"},
 #endif
     // --- start: SUPER-RESOLUTION SUPPORT
@@ -1157,6 +1162,7 @@ ConfigEntry config_entry[] = {
 #if CONFIG_ENABLE_FILM_GRAIN
     {FILM_GRAIN_TOKEN, "FilmGrain", set_cfg_generic_token},
     {FILM_GRAIN_DENOISE_APPLY_TOKEN, "FilmGrainDenoise", set_cfg_generic_token},
+    {FILM_GRAIN_CROP_TOKEN, "FilmGrainCrop", set_cfg_generic_token},
     {FGS_TABLE_TOKEN, "FilmGrainTable", set_cfg_fgs_table_path},
 #endif
 #ifdef LIBHDR10PLUS_RS_FOUND

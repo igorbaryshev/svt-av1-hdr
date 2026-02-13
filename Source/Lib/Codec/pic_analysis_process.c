@@ -445,12 +445,14 @@ static int32_t apply_denoise_2d(SequenceControlSet *scs, PictureParentControlSet
     fg_init_data.stride_cr            = pcs->enhanced_pic->stride_cr;
     fg_init_data.denoise_apply        = scs->static_config.film_grain_denoise_apply;
     fg_init_data.adaptive_film_grain  = scs->static_config.adaptive_film_grain;
+    AomFilmGrainCrop *fg_crop         = &scs->static_config.film_grain_crop;
     EB_NEW(denoise_and_model, svt_aom_denoise_and_model_ctor, (EbPtr)&fg_init_data);
 
     if (svt_aom_denoise_and_model_run(denoise_and_model,
                                       inputPicturePointer,
                                       &pcs->frm_hdr.film_grain_params,
-                                      scs->static_config.encoder_bit_depth > EB_EIGHT_BIT)) {}
+                                      scs->static_config.encoder_bit_depth > EB_EIGHT_BIT,
+                                      fg_crop)) {}
 
     EB_DELETE(denoise_and_model);
 

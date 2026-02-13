@@ -1890,6 +1890,8 @@ static const WarpedMotionParams default_warp_params = {
 // There must absolutely be no reason to use more than 2x of original bytes, assuming 4:2:0
 #define BITSTREAM_BUFFER_SIZE(pixels)       ((pixels) * 3 / 2 * 2)
 
+#define ALIGN_DOWN(val, align) ((val) & ~((align) - 1))
+
 /** Redefine ASSERT() to avoid warnings
 */
 #if defined _DEBUG || _DEBUG_
