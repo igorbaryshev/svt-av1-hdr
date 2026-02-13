@@ -4171,6 +4171,11 @@ static void copy_api_from_app(SequenceControlSet *scs, EbSvtAv1EncConfiguration 
     if (scs->static_config.film_grain_denoise_strength == 0 && scs->static_config.film_grain_denoise_apply == 1) {
         SVT_WARN("Film grain denoise apply signal is going to be ignored when film grain is off.\n");
     }
+    scs->static_config.film_grain_crop = ((EbSvtAv1EncConfiguration*)config_struct)->film_grain_crop;
+    if (scs->static_config.film_grain_denoise_strength == 0 && scs->static_config.film_grain_crop.enabled) {
+        SVT_WARN("Film grain crop is going to be ignored when film grain is off.\n");
+        scs->static_config.film_grain_crop.enabled = false;
+    }
     scs->seq_header.film_grain_params_present = (uint8_t)(scs->static_config.film_grain_denoise_strength>0);
     scs->static_config.fgs_table = config_struct->fgs_table;
     scs->static_config.photon_noise_iso = config_struct->photon_noise_iso;

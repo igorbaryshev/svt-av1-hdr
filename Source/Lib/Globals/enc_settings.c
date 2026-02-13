@@ -739,6 +739,10 @@ EbErrorType svt_av1_verify_settings(SequenceControlSet *scs) {
         return_error = EB_ErrorBadParameter;
     }
 
+    if (config->film_grain_crop.enabled && config->film_grain_denoise_apply == 1) {
+        SVT_ERROR("Instance %u: Film grain denoise and film grain estimation area cropping are mutually exclusive\n");
+    }
+
     if (config->enable_photon_noise_chroma != 0 && config->enable_photon_noise_chroma != 1) {
         SVT_ERROR("Photon noise chroma signal can only have a value of 0 or 1.\n");
         return_error = EB_ErrorBadParameter;
@@ -995,6 +999,7 @@ EbErrorType svt_av1_set_default_params(EbSvtAv1EncConfiguration *config_ptr) {
     // Film grain denoising
     config_ptr->film_grain_denoise_strength = 0;
     config_ptr->film_grain_denoise_apply    = 0;
+    config_ptr->film_grain_crop.enabled     = false;
     config_ptr->photon_noise_iso            = 0;
     config_ptr->enable_photon_noise_chroma  = 0;
 
@@ -1226,6 +1231,14 @@ void svt_av1_print_lib_params(SequenceControlSet *scs) {
                      1,
                      config->photon_noise_iso,
                      config->enable_photon_noise_chroma ? "on" : "off");
+        }
+        if (config->film_grain_crop.enabled) {
+            SVT_INFO("SVT [config]: film grain area crop / width / height / x / y \t\t\t: %d / %d / %d / %d / %d\n",
+                     (uint8_t)config->film_grain_crop.enabled,
+                     (uint16_t)(config->film_grain_crop.width_percent * config->source_width / 100),
+                     (uint16_t)(config->film_grain_crop.height_percent * config->source_height / 100),
+                     (uint16_t)(config->film_grain_crop.crop_offset_x_percent * config->source_width / 100),
+                     (uint16_t)(config->film_grain_crop.crop_offset_y_percent * config->source_height / 100));
         }
         SVT_INFO("SVT [config]: sharpness / luminance-based QP bias \t\t\t\t: %d / %d\n",
                  config->sharpness,
@@ -1570,6 +1583,55 @@ static EbErrorType str_to_bitrate(const char *nptr, uint32_t *out) {
         *out = 100000000;
         SVT_WARN("Bitrate value: %s has been set to 100000000\n", nptr);
     }
+    return EB_ErrorNone;
+}
+
+static EbErrorType str_to_film_grain_crop(const char *nptr, AomFilmGrainCrop *out) {
+    const char *ptr = nptr;
+    char       *endptr;
+    double      list[4];
+    uint8_t     i = 0;
+
+    while (*ptr) {
+        if (*ptr == '[' || *ptr == ']') {
+            ptr++;
+            continue;
+        }
+
+        double      rawval;
+        EbErrorType err = str_to_double(ptr, &rawval, &endptr);
+        if (err != EB_ErrorNone)
+            return err;
+        if (rawval > 100 || rawval < 0)
+            return EB_ErrorBadParameter;
+        if (i >= 4) {
+            return EB_ErrorBadParameter;
+        } else if (*endptr == ':' || *endptr == ']') {
+            endptr++;
+        } else if (*endptr) {
+            return EB_ErrorBadParameter;
+        }
+        list[i++] = rawval;
+        ptr       = endptr;
+    }
+    if (i != 1 && i != 2 && i != 4)
+        return EB_ErrorBadParameter;
+    if (i == 1)
+        list[1] = list[0];
+    if (list[0] == 0 || list[1] == 0)
+        return EB_ErrorBadParameter;
+    out->width_percent  = list[0];
+    out->height_percent = list[1];
+    if (i == 4) {
+        if (((list[0] + list[2]) > 100) || ((list[1] + list[3]) > 100))
+            return EB_ErrorBadParameter;
+        out->crop_offset_x_percent = list[2];
+        out->crop_offset_y_percent = list[3];
+    } else {
+        out->crop_offset_x_percent = (100.0 - list[0]) / 2;
+        out->crop_offset_y_percent = (100.0 - list[1]) / 2;
+    }
+    out->enabled = true;
     return EB_ErrorNone;
 }
 
@@ -2051,6 +2113,9 @@ EB_API EbErrorType svt_av1_enc_parse_parameter(EbSvtAv1EncConfiguration *config_
 
     if (!strcmp(name, "mbr"))
         return str_to_bitrate(value, &config_struct->max_bit_rate);
+
+    if (!strcmp(name, "film-grain-crop"))
+        return str_to_film_grain_crop(value, &config_struct->film_grain_crop);
 
     // options updating more than one field
     if (!strcmp(name, "crf"))
