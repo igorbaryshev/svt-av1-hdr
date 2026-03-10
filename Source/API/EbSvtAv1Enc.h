@@ -1062,14 +1062,14 @@ typedef struct EbSvtAv1EncConfiguration {
     uint32_t photon_noise_iso;
 
     /**
-     * @brief Enable chroma noise, which will is scaled based on luma values for generated film grain table.
+     * @brief Control whether chroma noise is scaled from luma or as a separate ISO value
      *
-     * 0: disable chroma scaling
-     * 1: enable chroma scaling
-     *
-     * Default is 0.
+     * -1: chroma scaling from luma
+     *  0: disable chroma noise
+     *  1-100000: ISO value
+     * Default is -1.
      */
-    uint8_t enable_photon_noise_chroma;
+    int32_t photon_noise_chroma;
 
     /**
      * @brief Check if color range is provided by the user
@@ -1079,10 +1079,11 @@ typedef struct EbSvtAv1EncConfiguration {
     /*Add 128 Byte Padding to Struct to avoid changing the size of the public configuration struct*/
     uint8_t padding[128
         /* SVT-AV1-HDR additions */
-        - (sizeof(uint8_t) * 9)
+        - (sizeof(uint8_t) * 8)
         - (sizeof(bool) * 3)
         - (sizeof(double) * 1)
         - (sizeof(uint32_t) * 1)
+        - (sizeof(int32_t) * 1)
     ];
     // clang-format on
 } EbSvtAv1EncConfiguration;

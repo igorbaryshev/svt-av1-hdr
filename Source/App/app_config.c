@@ -914,9 +914,10 @@ ConfigDescription config_entry_specific[] = {
 
     {FGS_TABLE_TOKEN, "Set the film grain model table path"},
 
-    {PHOTON_NOISE_TOKEN, "Generate photon noise table for film grain, default is 0 [0: off, 1-100000: ISO value]"},
+    {PHOTON_NOISE_TOKEN, "Generate luma photon noise table for film grain, default is 0 [0: off, 1-100000: ISO value]"},
 
-    {PHOTON_NOISE_CHROMA_TOKEN, "Enable chroma noise, default is 0 [0: off, 1: on]"},
+    {PHOTON_NOISE_CHROMA_TOKEN,
+     "Scale chroma photon noise from luma or set a separate ISO value, default is -1 [-1: on, 0: off, 1-100000: ISO value]"},
 
 #endif
     // --- start: SUPER-RESOLUTION SUPPORT

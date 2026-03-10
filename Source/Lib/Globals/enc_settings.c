@@ -739,12 +739,12 @@ EbErrorType svt_av1_verify_settings(SequenceControlSet *scs) {
         return_error = EB_ErrorBadParameter;
     }
 
-    if (config->enable_photon_noise_chroma != 0 && config->enable_photon_noise_chroma != 1) {
-        SVT_ERROR("Photon noise chroma signal can only have a value of 0 or 1.\n");
+    if (config->photon_noise_chroma < -1 || config->photon_noise_chroma > 100000) {
+        SVT_ERROR("Photon noise chroma value should be in the range [-1 - 100000].\n");
         return_error = EB_ErrorBadParameter;
     }
     if (config->photon_noise_iso > 100000) {
-        SVT_ERROR("Photon noise ISO value should be in range [0-100000]");
+        SVT_ERROR("Photon noise ISO value should be in the range [0 - 100000]");
         return_error = EB_ErrorBadParameter;
     }
 
@@ -993,7 +993,7 @@ EbErrorType svt_av1_set_default_params(EbSvtAv1EncConfiguration *config_ptr) {
     config_ptr->film_grain_denoise_strength = 0;
     config_ptr->film_grain_denoise_apply    = 0;
     config_ptr->photon_noise_iso            = 0;
-    config_ptr->enable_photon_noise_chroma  = 0;
+    config_ptr->photon_noise_chroma         = -1;
 
     // CPU Flags
     config_ptr->use_cpu_flags = EB_CPU_FLAGS_ALL;
@@ -1219,10 +1219,17 @@ void svt_av1_print_lib_params(SequenceControlSet *scs) {
             }
         }
         if (config->photon_noise_iso > 0) {
-            SVT_INFO("SVT [config]: photon noise synth / ISO / chroma \t\t\t\t: %d / %d / %s\n",
-                     1,
-                     config->photon_noise_iso,
-                     config->enable_photon_noise_chroma ? "on" : "off");
+            if (config->photon_noise_chroma > 0) {
+                SVT_INFO("SVT [config]: photon noise synth / ISO luma / ISO chroma \t\t\t: %d / %d / %d\n",
+                         1,
+                         config->photon_noise_iso,
+                         config->photon_noise_chroma);
+            } else {
+                SVT_INFO("SVT [config]: photon noise synth / ISO / chroma \t\t\t\t: %d / %d / %s\n",
+                         1,
+                         config->photon_noise_iso,
+                         config->photon_noise_chroma == -1 ? "on" : "off");
+            }
         }
         SVT_INFO("SVT [config]: sharpness / luminance-based QP bias \t\t\t\t: %d / %d\n",
                  config->sharpness,
@@ -2190,7 +2197,6 @@ EB_API EbErrorType svt_av1_enc_parse_parameter(EbSvtAv1EncConfiguration *config_
         {"superres-kf-denom", &config_struct->superres_kf_denom},
         {"tune", &config_struct->tune},
         {"film-grain-denoise", &config_struct->film_grain_denoise_apply},
-        {"photon-noise-chroma", &config_struct->enable_photon_noise_chroma},
         {"enable-dlf", &config_struct->enable_dlf_flag},
         {"resize-mode", &config_struct->resize_mode},
         {"resize-denom", &config_struct->resize_denom},
@@ -2287,6 +2293,7 @@ EB_API EbErrorType svt_av1_enc_parse_parameter(EbSvtAv1EncConfiguration *config_
         {"tile-rows", &config_struct->tile_rows},
         {"tile-columns", &config_struct->tile_columns},
         {"sframe-dist", &config_struct->sframe_dist},
+        {"photon-noise-chroma", &config_struct->photon_noise_chroma},
     };
     const size_t int_opts_size = sizeof(int_opts) / sizeof(int_opts[0]);
 

@@ -58,9 +58,9 @@ Controls how 'strongly' the CDEF (Constrained Directional Enhancement Filter) is
 
 Generates and adds photon noise table with specified ISO value to be used as fgs-table during the encode.
 
-- `--photon-noise-chroma` *0 to 1*
+- `--photon-noise-chroma` *-1 to 100000*
 
-Enables chroma noise in the photon noise table.
+Scale chroma photon noise from luma or set a separate ISO value, default is -1 [-1: on, 0: off, 1-100000: ISO value]
 
 ### From SVT-AV1-PSY
 

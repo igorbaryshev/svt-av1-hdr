@@ -27,10 +27,16 @@ typedef struct {
 typedef struct {
     uint32_t         width;
     uint32_t         height;
-    uint32_t         iso_setting;
-    uint8_t          chroma_setting;
+    uint32_t         iso_luma;
+    int32_t          iso_chroma;
+    EbColorRange     color_range;
     TransferFunction transfer_function;
 } PhotonNoiseArgs;
+
+typedef struct {
+    double x;
+    double encoded_noise;
+} ScalingPoint;
 
 // Transfer function implementations
 static double maxf(double a, double b) { return a > b ? a : b; }
@@ -83,7 +89,7 @@ static double bt601_from_linear(double L) {
 }
 
 static double bt601_to_linear(double E) {
-    if (E < 0.08145)
+    if (E < 0.081)
         return E / 4.5;
     else
         return pow((E + 0.099) / 1.099, 1.0 / 0.45);
@@ -242,10 +248,8 @@ static TransferFunction find_transfer_function(EbTransferCharacteristics tc) {
     return tf;
 }
 
-static void svt_av1_generate_photon_noise(const PhotonNoiseArgs *photon_noise_args, EbSvtAv1EncConfiguration *cfg,
-                                          const EbColorRange color_range) {
-    AomFilmGrain *film_grain;
-    film_grain = (AomFilmGrain *)calloc(1, sizeof(AomFilmGrain));
+static ScalingPoint get_scaling_point(const double x, TransferFunction tf, int32_t iso, uint32_t pixels, double range,
+                                      uint32_t range_min) {
     // Assumes a daylight-like spectrum.
     // https://www.strollswithmydog.com/effective-quantum-efficiency-of-sensor/#:~:text=11%2C260%20photons/um%5E2/lx-s
     static const double kPhotonsPerLxSPerUm2 = 11260.0;
@@ -258,103 +262,198 @@ static void svt_av1_generate_photon_noise(const PhotonNoiseArgs *photon_noise_ar
     // higher than this at low ISO settings but it matters less there.
     static const double kPhotoResponseNonUniformity = 0.005;
     static const double kInputReferredReadNoise     = 1.5;
-    /* OK */
+
+    // In microns. Assumes a 35mm sensor (36mm × 24mm).
+    const double pixel_area_um2 = (36000.0 * 24000.0) / pixels;
 
     // Focal plane exposure for a mid-tone (typically a 18% reflectance card), in
     // lx·s.
-    const double mid_tone_exposure = 10.0 / photon_noise_args->iso_setting;
-
-    // In microns. Assumes a 35mm sensor (36mm × 24mm).
-    const double pixel_area_um2 = (36000.0 * 24000.0) / (photon_noise_args->width * photon_noise_args->height);
+    const double mid_tone_exposure = 10.0 / iso;
 
     const double mid_tone_electrons_per_pixel = kEffectiveQuantumEfficiency * kPhotonsPerLxSPerUm2 * mid_tone_exposure *
         pixel_area_um2;
-    const double max_electrons_per_pixel = mid_tone_electrons_per_pixel / photon_noise_args->transfer_function.mid_tone;
+    const double max_electrons_per_pixel = mid_tone_electrons_per_pixel / tf.mid_tone;
+    const double linear                  = tf.to_linear(x);
+    const double electrons_per_pixel     = max_electrons_per_pixel * linear;
+    // Quadrature sum of the relevant sources of noise, in electrons rms. Photon
+    // shot noise is sqrt(electrons) so we can skip the square root and the
+    // squaring.
+    // https://en.wikipedia.org/wiki/Addition_in_quadrature
+    // https://doi.org/10.1117/3.725073
+    const double noise_in_electrons = sqrt(
+        kInputReferredReadNoise * kInputReferredReadNoise + electrons_per_pixel +
+        (kPhotoResponseNonUniformity * kPhotoResponseNonUniformity * electrons_per_pixel * electrons_per_pixel));
+    const double linear_noise       = noise_in_electrons / max_electrons_per_pixel;
+    const double linear_range_start = maxf(0.0, linear - 2.0 * linear_noise);
+    const double linear_range_end   = minf(1.0, linear + 2.0 * linear_noise);
+    const double tf_slope           = (tf.from_linear(linear_range_end) - tf.from_linear(linear_range_start)) /
+        (linear_range_end - linear_range_start);
+    double encoded_noise = linear_noise * tf_slope;
 
-    const uint32_t max_value   = (color_range == EB_CR_STUDIO_RANGE) ? 235 : 255;
-    const uint32_t min_value   = (color_range == EB_CR_STUDIO_RANGE) ? 16 : 0;
-    const uint32_t range       = max_value - min_value;
-    const uint32_t ramp_offset = 3;
+    return (ScalingPoint){.x             = round(range_min + (range * x)),
+                          .encoded_noise = minf((double)range, round(range * 7.88 * encoded_noise))};
+}
 
-    film_grain->num_y_points = 14;
-
-    const int32_t min_edge = 0;
-    const int32_t max_edge = film_grain->num_y_points - 1;
-
-    for (int32_t i = 0; i < film_grain->num_y_points; ++i) {
-        double x = (ramp_offset + (range - 2 * ramp_offset) * ((i - 1) / (film_grain->num_y_points - 3.0))) / range;
-
-        // Applying photon noise "as is" results in unwanted brightening of darkest and darkening of brightest luma values;
-        // clamping scaling points to a maximum of 1 at those min and max values prevents that.
-        if (i == min_edge)
-            x = 0;
-        else if (i == max_edge)
-            x = 1;
-
-        const double linear              = photon_noise_args->transfer_function.to_linear(x);
-        const double electrons_per_pixel = max_electrons_per_pixel * linear;
-        // Quadrature sum of the relevant sources of noise, in electrons rms. Photon
-        // shot noise is sqrt(electrons) so we can skip the square root and the
-        // squaring.
-        // https://en.wikipedia.org/wiki/Addition_in_quadrature
-        // https://doi.org/10.1117/3.725073
-        const double noise_in_electrons = sqrt(
-            kInputReferredReadNoise * kInputReferredReadNoise + electrons_per_pixel +
-            (kPhotoResponseNonUniformity * kPhotoResponseNonUniformity * electrons_per_pixel * electrons_per_pixel));
-        const double linear_noise       = noise_in_electrons / max_electrons_per_pixel;
-        const double linear_range_start = maxf(0.0, linear - 2.0 * linear_noise);
-        const double linear_range_end   = minf(1.0, linear + 2.0 * linear_noise);
-        const double tf_slope           = (photon_noise_args->transfer_function.from_linear(linear_range_end) -
-                                 photon_noise_args->transfer_function.from_linear(linear_range_start)) /
-            (linear_range_end - linear_range_start);
-        double encoded_noise = linear_noise * tf_slope;
-
-        x             = round(min_value + (range * x));
-        encoded_noise = minf((double)range, round(range * 7.88 * encoded_noise));
-
-        film_grain->scaling_points_y[i][0] = (int32_t)x;
-
-        if (i == min_edge || i == max_edge) {
-            film_grain->scaling_points_y[i][1] = (encoded_noise >= 1) ? 1 : 0;
-            continue;
-        }
-
-        film_grain->scaling_points_y[i][1] = (int32_t)encoded_noise;
+static void set_scaling_points(AomFilmGrain *film_grain, const PhotonNoiseArgs *photon_noise_args, PlaneType plane) {
+    const uint32_t         pixels          = photon_noise_args->width * photon_noise_args->height;
+    const TransferFunction tf              = photon_noise_args->transfer_function;
+    const uint32_t         range_min       = (photon_noise_args->color_range == EB_CR_FULL_RANGE) ? 0 : 16;
+    const uint32_t         range_max       = (photon_noise_args->color_range == EB_CR_FULL_RANGE) ? 255
+                      : (plane == PLANE_TYPE_Y)                                                   ? 235
+                                                                                                  : 240;
+    const uint32_t         range           = range_max - range_min;
+    const double           ramp            = (plane == PLANE_TYPE_Y) ? (range * 64.0 / 255) : 4;
+// const double mid_ramp = ramp / ((plane == PLANE_TYPE_Y) ? 4.0 : 4.0);
+    const double           mid_ramp_denom  = (plane == PLANE_TYPE_Y) ? 2.0 : 1.0;
+    const uint32_t         num_ramp_points = (plane == PLANE_TYPE_Y) ? 3 : 2;
+    const uint32_t iso = (plane == PLANE_TYPE_Y || photon_noise_args->iso_chroma == -1) ? photon_noise_args->iso_luma
+                                                                                        : photon_noise_args->iso_chroma;
+    // Use odd number of chroma scaling points to get a midpoint for noise clamping.
+    const int32_t num_points = (plane == PLANE_TYPE_Y) ? 14 : 9;
+    if (plane == PLANE_TYPE_Y)
+        film_grain->num_y_points = num_points;
+    else {
+        film_grain->num_cb_points = num_points;
+        film_grain->num_cr_points = num_points;
     }
 
+    double       x;
+    ScalingPoint point;
+    int32_t      half_noise;
+    // Y plane scaling points
+    if (plane == PLANE_TYPE_Y) {
+        const uint32_t num_range_points = num_points - 2 * num_ramp_points;
+        // clamp edge ramp points
+        point                              = get_scaling_point(0, tf, iso, pixels, range, range_min);
+        film_grain->scaling_points_y[0][0] = (int32_t)point.x;
+        film_grain->scaling_points_y[0][1]              = clamp((int32_t)point.encoded_noise, 0, 2);
+        point                              = get_scaling_point(1, tf, iso, pixels, range, range_min);
+        film_grain->scaling_points_y[num_points - 1][0] = (int32_t)point.x;
+        film_grain->scaling_points_y[num_points - 1][1] = clamp((int32_t)point.encoded_noise, 0, 2);
+        // mid ramp points
+        const double mid_ramp_step = ramp / num_ramp_points;
+        for (uint32_t i = 1; i < num_ramp_points; i++) {
+            x                                               = (i * mid_ramp_step) / range;
+            point                                           = get_scaling_point(x, tf, iso, pixels, range, range_min);
+            film_grain->scaling_points_y[i][0]              = point.x;
+            half_noise                                      = (int32_t)((point.encoded_noise < 2) ? point.encoded_noise
+                                                                                                  : point.encoded_noise / mid_ramp_denom);
+            film_grain->scaling_points_y[i][1]              = half_noise;
+            x                                               = (range - (i * mid_ramp_step)) / range;
+            point                                           = get_scaling_point(x, tf, iso, pixels, range, range_min);
+            film_grain->scaling_points_y[num_points - 1 - i][0] = (int32_t)point.x;
+            half_noise                                      = (int32_t)((point.encoded_noise < 2) ? point.encoded_noise
+                                                                                                  : point.encoded_noise / mid_ramp_denom);
+            film_grain->scaling_points_y[num_points - 1 - i][1] = half_noise;
+        }
+        // normal scaling points after ramp
+        for (uint32_t i = 0; i < num_range_points; i++) {
+            x     = (ramp + (range - 2 * ramp) * (i / (num_range_points - 1.0))) / range;
+            point = get_scaling_point(x, tf, iso, pixels, range, range_min);
+            film_grain->scaling_points_y[i + num_ramp_points][0] = (int32_t)point.x;
+            film_grain->scaling_points_y[i + num_ramp_points][1] = (int32_t)point.encoded_noise;
+        }
+        return;
+    }
+
+    // Cb and Cr plane scaling points
+    // clamp mid point noise
+    const uint32_t mid_point                    = num_points / 2;
+    const double   mid_range                    = range / 2.0;
+    const double   mid_ramp                     = ramp / 4.0;
+    point                                       = get_scaling_point(0, tf, iso, pixels, mid_range, range_min);
+    film_grain->scaling_points_cr[mid_point][0] = film_grain->scaling_points_cb[mid_point][0] = range_min +
+        (int32_t)mid_range;
+    film_grain->scaling_points_cr[mid_point][1] = film_grain->scaling_points_cb[mid_point][1] = clamp(
+        (int32_t)point.encoded_noise, 0, 2);
+    // mid ramp points
+    x          = mid_ramp / mid_range;
+    point      = get_scaling_point(x, tf, iso, pixels, mid_range, range_min);
+    half_noise = (int32_t)((point.encoded_noise < 2) ? point.encoded_noise : point.encoded_noise / mid_ramp_denom);
+    for (int32_t i = -1; i < 2; i += 2) {
+        film_grain->scaling_points_cr[mid_point + i][0] = film_grain->scaling_points_cb[mid_point + i][0] =
+            (int32_t)(range_min + mid_range * (1 + x * i));
+        film_grain->scaling_points_cr[mid_point + i][1] = film_grain->scaling_points_cb[mid_point + i][1] = half_noise;
+    }
+    // normal scaling points after ramp
+    for (uint32_t i = 0; i < mid_point - 1; i++) {
+        x               = ((double)i / (mid_point - num_ramp_points) * (mid_range - ramp)) / mid_range;
+        double x_for_tf = fabs(x - 0.5) * 2;
+        point           = get_scaling_point(x_for_tf, tf, iso, pixels, mid_range, range_min);
+        film_grain->scaling_points_cr[i][0] = film_grain->scaling_points_cb[i][0] = (int32_t)(range_min +
+                                                                                              (x / 2) * range);
+        film_grain->scaling_points_cr[i][1] = film_grain->scaling_points_cb[i][1] = (int32_t)point.encoded_noise;
+        film_grain->scaling_points_cr[num_points - 1 - i][0] = film_grain->scaling_points_cb[num_points - 1 - i][0] =
+            (int32_t)(range_min + (1 - x / 2) * range);
+        film_grain->scaling_points_cr[num_points - 1 - i][1] = film_grain->scaling_points_cb[num_points - 1 - i][1] =
+            (int32_t)point.encoded_noise;
+    }
+}
+
+static void print_scaling_points(AomFilmGrain *film_grain) {
+    printf("\n");
+    printf("Y points:\n");
+    for (int32_t i = 0; i < 14; i++) {
+        printf("\t%d: %d %d", i, film_grain->scaling_points_y[i][0], film_grain->scaling_points_y[i][1]);
+    }
+    printf("\n");
+    printf("\n");
+    printf("Cb points:\n");
+    for (int32_t i = 0; i < 9; i++) {
+        printf("\t%d: %d %d", i, film_grain->scaling_points_cb[i][0], film_grain->scaling_points_cb[i][1]);
+    }
+    printf("\n");
+    printf("\n");
+    printf("Cr points:\n");
+    for (int32_t i = 0; i < 9; i++) {
+        printf("\t%d: %d %d", i, film_grain->scaling_points_cr[i][0], film_grain->scaling_points_cr[i][1]);
+    }
+    printf("\n");
+}
+
+static void svt_av1_generate_photon_noise(const PhotonNoiseArgs *photon_noise_args, EbSvtAv1EncConfiguration *cfg) {
+    AomFilmGrain *film_grain;
+    film_grain               = (AomFilmGrain *)calloc(1, sizeof(AomFilmGrain));
+    const int32_t iso_chroma = photon_noise_args->iso_chroma;
+    set_scaling_points(film_grain, photon_noise_args, PLANE_TYPE_Y);
+    if (iso_chroma == 0) {
+        film_grain->num_cr_points = film_grain->num_cb_points = 0;
+        film_grain->cr_mult = film_grain->cb_mult = 0;
+    } else {
+        set_scaling_points(film_grain, photon_noise_args, PLANE_TYPE_UV);
+        // found from testing that this value allows to disable chroma noise at midpoint value
+        film_grain->cr_mult = film_grain->cb_mult = 64;
+    }
+    print_scaling_points(film_grain);
     film_grain->apply_grain       = 1;
-    film_grain->ignore_ref        = 1;
+    film_grain->ignore_ref        = 0;
     film_grain->update_parameters = 1;
-    film_grain->num_cb_points     = 0;
-    film_grain->num_cr_points     = 0;
     film_grain->scaling_shift     = 8;
     film_grain->ar_coeff_lag      = 0;
     memset(film_grain->ar_coeffs_y, 0, sizeof(film_grain->ar_coeffs_y));
     memset(film_grain->ar_coeffs_cb, 0, sizeof(film_grain->ar_coeffs_cb));
     memset(film_grain->ar_coeffs_cr, 0, sizeof(film_grain->ar_coeffs_cr));
     film_grain->ar_coeff_shift           = 6;
-    film_grain->cb_mult                  = 0;
     film_grain->cb_luma_mult             = 0;
     film_grain->cb_offset                = 0;
-    film_grain->cr_mult                  = 0;
     film_grain->cr_luma_mult             = 0;
     film_grain->cr_offset                = 0;
     film_grain->overlap_flag             = 1;
     film_grain->grain_scale_shift        = 0;
-    film_grain->chroma_scaling_from_luma = photon_noise_args->chroma_setting;
-    film_grain->clip_to_restricted_range = (color_range == EB_CR_STUDIO_RANGE) ? 1 : 0;
+    film_grain->chroma_scaling_from_luma = 0;
+    film_grain->clip_to_restricted_range = (photon_noise_args->color_range == EB_CR_STUDIO_RANGE) ? 1 : 0;
     cfg->fgs_table                       = film_grain;
 }
 
 EbErrorType svt_av1_generate_photon_noise_table(EbSvtAv1EncConfiguration *config) {
-    EbColorRange    color_range = find_color_range(config);
-    PhotonNoiseArgs args        = {.width             = config->source_width,
-                                   .height            = config->source_height,
-                                   .iso_setting       = config->photon_noise_iso,
-                                   .chroma_setting    = config->enable_photon_noise_chroma,
-                                   .transfer_function = find_transfer_function(config->transfer_characteristics)};
+    const PhotonNoiseArgs args = {.width             = config->source_width,
+                                  .height            = config->source_height,
+                                  .iso_luma          = config->photon_noise_iso,
+                                  .iso_chroma        = config->photon_noise_chroma,
+                                  .color_range       = find_color_range(config),
+                                  .transfer_function = find_transfer_function(config->transfer_characteristics)};
 
-    svt_av1_generate_photon_noise(&args, config, color_range);
+    svt_av1_generate_photon_noise(&args, config);
 
     return EB_ErrorNone;
 }
